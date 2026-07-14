@@ -4,6 +4,10 @@ export const addressSchema = z
   .string()
   .regex(/^0x[a-fA-F0-9]{40}$/, "Expected an EVM address");
 
+export const bytes32Schema = z
+  .string()
+  .regex(/^0x[a-fA-F0-9]{64}$/, "Expected a bytes32 hex value");
+
 export const microUsdtSchema = z
   .number()
   .int()
@@ -66,9 +70,22 @@ export const offerSchema = z.object({
 
 export const policyEvaluationRequestSchema = z.object({
   policy: agentPolicySchema,
-  offer: offerSchema,
+  counterparty: addressSchema,
   chainId: z.number().int().positive(),
   verifyingContract: addressSchema,
+  humanApprovedDigest: bytes32Schema.optional(),
+  authorization: z.object({
+    dealId: bytes32Schema,
+    buyer: addressSchema,
+    seller: addressSchema,
+    player: addressSchema,
+    token: addressSchema,
+    totalAmount: microUsdtSchema.positive(),
+    signingBonus: microUsdtSchema,
+    milestoneRoot: bytes32Schema,
+    fundingDeadline: z.number().int().positive(),
+    settlementDeadline: z.number().int().positive(),
+  }),
 });
 
 export const dealSchema = z.object({

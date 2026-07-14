@@ -10,14 +10,14 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspace @laforza/domain && npm run build --workspace @laforza/contracts && npm run build --workspace @laforza/backend && npm run build --workspace @laforza/frontend",
+    "build": "npm run build --workspace @laforza/domain && npm run build --workspace @laforza/protocol && npm run build --workspace @laforza/contracts && npm run build --workspace @laforza/backend && npm run build --workspace @laforza/frontend",
     "check": "npm run format:check && npm run typecheck && npm run test && npm run build",
     "dev:frontend": "npm run dev --workspace @laforza/frontend",
     "dev:backend": "npm run dev --workspace @laforza/backend",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "npm run test --workspace @laforza/domain && npm run test --workspace @laforza/contracts && npm run test --workspace @laforza/backend",
-    "typecheck": "npm run build --workspace @laforza/domain && npm run typecheck --workspace @laforza/contracts && npm run typecheck --workspace @laforza/backend && npm run typecheck --workspace @laforza/frontend"
+    "test": "npm run test --workspace @laforza/domain && npm run test --workspace @laforza/protocol && npm run test --workspace @laforza/contracts && npm run test --workspace @laforza/backend",
+    "typecheck": "npm run build --workspace @laforza/domain && npm run build --workspace @laforza/protocol && npm run typecheck --workspace @laforza/contracts && npm run typecheck --workspace @laforza/backend && npm run typecheck --workspace @laforza/frontend"
   },
   "engines": {
     "node": ">=22.17"

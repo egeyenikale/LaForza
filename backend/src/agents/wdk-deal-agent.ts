@@ -1,34 +1,30 @@
-import type { AgentPolicy, Offer } from "@laforza/domain";
+import type { AgentPolicy } from "@laforza/domain";
+import {
+  buildDealAuthorizationTypedData,
+  hashDealAuthorization,
+  type DealAuthorizationEnvelope,
+} from "@laforza/protocol";
 import WDK, { type Policy, type SimulationResult } from "@tetherto/wdk";
 import WalletManagerEvm from "@tetherto/wdk-wallet-evm";
+import { TypedDataEncoder } from "ethers";
 
-import { buildOfferTypedData, hashOfferTypedData } from "./deal-typed-data.js";
-
-type OfferTypedData = ReturnType<typeof buildOfferTypedData>;
+type AuthorizationTypedData = ReturnType<
+  typeof buildDealAuthorizationTypedData
+>;
 
 type PolicyAccount = {
   getAddress(): Promise<string>;
-  signTypedData(typedData: OfferTypedData): Promise<string>;
+  signTypedData(typedData: AuthorizationTypedData): Promise<string>;
   simulate: {
-    signTypedData(typedData: OfferTypedData): Promise<SimulationResult>;
+    signTypedData(typedData: AuthorizationTypedData): Promise<SimulationResult>;
   };
 };
 
-type PolicyInput = {
-  domain?: {
-    chainId?: number | string | bigint;
-    verifyingContract?: string;
-  };
-  message?: {
-    counterparty?: string;
-    totalMicroUsdt?: number | string | bigint;
-    expiresAt?: number | string | bigint;
-  };
-};
+type PolicyInput = AuthorizationTypedData;
 
 export type DealPolicyResult = SimulationResult & {
   agentAddress: string;
-  offerDigest: string;
+  authorizationDigest: string;
   signature?: string;
 };
 
@@ -56,52 +52,77 @@ function typedDataFrom(params: unknown): PolicyInput {
   return (params ?? {}) as PolicyInput;
 }
 
-export function buildWdkDealPolicy(
-  policy: AgentPolicy,
-  chainId: number,
-  verifyingContract: string,
-  now: Date,
-): Policy {
-  const contract = normalizeAddress(verifyingContract);
+function digestFromPolicyParams(params: unknown): string | null {
+  const typedData = typedDataFrom(params);
+  try {
+    return TypedDataEncoder.hash(
+      typedData.domain,
+      typedData.types,
+      typedData.message,
+    );
+  } catch {
+    return null;
+  }
+}
+
+export function buildWdkDealPolicy(input: {
+  policy: AgentPolicy;
+  envelope: DealAuthorizationEnvelope;
+  counterparty: string;
+  now: Date;
+  humanApprovedDigest?: string;
+}): Policy {
+  const contract = normalizeAddress(input.envelope.verifyingContract);
   const counterparties = new Set(
-    policy.allowedCounterparties.map(normalizeAddress),
+    input.policy.allowedCounterparties.map(normalizeAddress),
   );
-  const maximum = BigInt(policy.maxDealMicroUsdt);
-  const approvalThreshold = BigInt(policy.humanApprovalThresholdMicroUsdt);
+  const counterparty = normalizeAddress(input.counterparty);
+  const maximum = BigInt(input.policy.maxDealMicroUsdt);
+  const approvalThreshold = BigInt(
+    input.policy.humanApprovalThresholdMicroUsdt,
+  );
   const policyExpiry = BigInt(
-    Math.floor(new Date(policy.expiresAt).getTime() / 1000),
+    Math.floor(new Date(input.policy.expiresAt).getTime() / 1000),
   );
-  const currentTime = BigInt(Math.floor(now.getTime() / 1000));
+  const currentTime = BigInt(Math.floor(input.now.getTime() / 1000));
+  const approvedDigest = input.humanApprovedDigest?.toLowerCase();
+
+  const hasHumanApproval = (params: unknown): boolean => {
+    const digest = digestFromPolicyParams(params)?.toLowerCase();
+    return digest !== null && digest === approvedDigest;
+  };
 
   return {
     id: "deadline-agent-deal-policy",
-    name: "DEADLINE football deal mandate",
+    name: "DEADLINE tournament deal mandate",
     scope: "project",
-    wallet: "sepolia",
+    wallet: "evm",
     rules: [
       {
-        name: "allow-mandated-offer",
+        name: "allow-mandated-authorization",
         operation: "signTypedData",
         action: "ALLOW",
-        reason: "Offer is inside the club mandate",
+        reason: "Authorization is inside the club mandate",
         conditions: [
           ({ params }) => {
             const typedData = typedDataFrom(params);
-            const amount = asBigInt(typedData.message?.totalMicroUsdt);
-            const offerExpiry = asBigInt(typedData.message?.expiresAt);
-            const counterparty = typedData.message?.counterparty;
+            const amount = asBigInt(typedData.message?.totalAmount);
+            const fundingDeadline = asBigInt(
+              typedData.message?.fundingDeadline,
+            );
 
             return (
-              String(typedData.domain?.chainId) === String(chainId) &&
+              String(typedData.domain?.chainId) ===
+                String(input.envelope.chainId) &&
               normalizeAddress(typedData.domain?.verifyingContract ?? "") ===
                 contract &&
               amount !== null &&
-              amount <= approvalThreshold &&
-              offerExpiry !== null &&
-              offerExpiry <= policyExpiry &&
+              amount <= maximum &&
+              (amount <= approvalThreshold || hasHumanApproval(params)) &&
+              fundingDeadline !== null &&
+              fundingDeadline <= policyExpiry &&
               currentTime <= policyExpiry &&
-              typeof counterparty === "string" &&
-              counterparties.has(normalizeAddress(counterparty))
+              counterparties.has(counterparty)
             );
           },
         ],
@@ -110,12 +131,10 @@ export function buildWdkDealPolicy(
         name: "deny-over-budget",
         operation: "signTypedData",
         action: "DENY",
-        reason: "Offer exceeds the club's maximum deal mandate",
+        reason: "Authorization exceeds the club's maximum deal mandate",
         conditions: [
           ({ params }) => {
-            const amount = asBigInt(
-              typedDataFrom(params).message?.totalMicroUsdt,
-            );
+            const amount = asBigInt(typedDataFrom(params).message?.totalAmount);
             return amount !== null && amount > maximum;
           },
         ],
@@ -124,14 +143,15 @@ export function buildWdkDealPolicy(
         name: "require-human-approval",
         operation: "signTypedData",
         action: "DENY",
-        reason: "Offer requires human sporting-director approval",
+        reason: "Authorization requires human sporting-director approval",
         conditions: [
           ({ params }) => {
-            const amount = asBigInt(
-              typedDataFrom(params).message?.totalMicroUsdt,
-            );
+            const amount = asBigInt(typedDataFrom(params).message?.totalAmount);
             return (
-              amount !== null && amount > approvalThreshold && amount <= maximum
+              amount !== null &&
+              amount > approvalThreshold &&
+              amount <= maximum &&
+              !hasHumanApproval(params)
             );
           },
         ],
@@ -141,26 +161,18 @@ export function buildWdkDealPolicy(
         operation: "signTypedData",
         action: "DENY",
         reason: "Counterparty is outside the club's allowlist",
-        conditions: [
-          ({ params }) => {
-            const counterparty = typedDataFrom(params).message?.counterparty;
-            return (
-              typeof counterparty !== "string" ||
-              !counterparties.has(normalizeAddress(counterparty))
-            );
-          },
-        ],
+        conditions: [() => !counterparties.has(counterparty)],
       },
       {
         name: "deny-wrong-deal-domain",
         operation: "signTypedData",
         action: "DENY",
-        reason: "Offer targets an unapproved chain or escrow contract",
+        reason: "Authorization targets an unapproved chain or escrow contract",
         conditions: [
           ({ params }) => {
             const domain = typedDataFrom(params).domain;
             return (
-              String(domain?.chainId) !== String(chainId) ||
+              String(domain?.chainId) !== String(input.envelope.chainId) ||
               normalizeAddress(domain?.verifyingContract ?? "") !== contract
             );
           },
@@ -170,16 +182,16 @@ export function buildWdkDealPolicy(
         name: "deny-expired-mandate",
         operation: "signTypedData",
         action: "DENY",
-        reason: "The club mandate or offer has expired",
+        reason: "The club mandate or funding window has expired",
         conditions: [
           ({ params }) => {
-            const offerExpiry = asBigInt(
-              typedDataFrom(params).message?.expiresAt,
+            const deadline = asBigInt(
+              typedDataFrom(params).message?.fundingDeadline,
             );
             return (
               currentTime > policyExpiry ||
-              offerExpiry === null ||
-              offerExpiry > policyExpiry
+              deadline === null ||
+              deadline > policyExpiry
             );
           },
         ],
@@ -189,39 +201,38 @@ export function buildWdkDealPolicy(
 }
 
 export class WdkDealAgent {
-  readonly #seed: string;
+  readonly #seed: string | Uint8Array;
 
-  constructor(seed = WDK.getRandomSeedPhrase(12)) {
+  constructor(seed: string | Uint8Array = WDK.getRandomSeedPhrase(12)) {
     this.#seed = seed;
   }
 
-  async evaluateOffer(input: {
+  async evaluateAuthorization(input: {
     policy: AgentPolicy;
-    offer: Offer;
-    chainId: number;
-    verifyingContract: string;
+    envelope: DealAuthorizationEnvelope;
+    counterparty: string;
     now?: Date;
+    humanApprovedDigest?: string;
     sign?: boolean;
   }): Promise<DealPolicyResult> {
-    const typedData = buildOfferTypedData(
-      input.offer,
-      input.chainId,
-      input.verifyingContract,
-    );
+    const typedData = buildDealAuthorizationTypedData(input.envelope);
     const wdk = new WDK(this.#seed)
-      .registerWallet("sepolia", WalletManagerEvm, {})
+      .registerWallet("evm", WalletManagerEvm, {})
       .registerPolicy(
-        buildWdkDealPolicy(
-          input.policy,
-          input.chainId,
-          input.verifyingContract,
-          input.now ?? new Date(),
-        ),
+        buildWdkDealPolicy({
+          policy: input.policy,
+          envelope: input.envelope,
+          counterparty: input.counterparty,
+          now: input.now ?? new Date(),
+          ...(input.humanApprovedDigest
+            ? { humanApprovedDigest: input.humanApprovedDigest }
+            : {}),
+        }),
       );
 
     try {
       const account = (await wdk.getAccount(
-        "sepolia",
+        "evm",
         0,
       )) as unknown as PolicyAccount;
       const verdict = await account.simulate.signTypedData(typedData);
@@ -233,7 +244,7 @@ export class WdkDealAgent {
       return {
         ...verdict,
         agentAddress: await account.getAddress(),
-        offerDigest: hashOfferTypedData(typedData),
+        authorizationDigest: hashDealAuthorization(input.envelope),
         ...(signature ? { signature } : {}),
       };
     } finally {

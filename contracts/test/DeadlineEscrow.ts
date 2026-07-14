@@ -1,23 +1,12 @@
+import {
+  dealAuthorizationTypes,
+  hashDealAuthorization,
+} from "@laforza/protocol";
 import { expect } from "chai";
 import { keccak256, toUtf8Bytes } from "ethers";
 import { network } from "hardhat";
 
 const { ethers } = await network.create();
-
-const authorizationTypes = {
-  DealAuthorization: [
-    { name: "dealId", type: "bytes32" },
-    { name: "buyer", type: "address" },
-    { name: "seller", type: "address" },
-    { name: "player", type: "address" },
-    { name: "token", type: "address" },
-    { name: "totalAmount", type: "uint256" },
-    { name: "signingBonus", type: "uint256" },
-    { name: "milestoneRoot", type: "bytes32" },
-    { name: "fundingDeadline", type: "uint64" },
-    { name: "settlementDeadline", type: "uint64" },
-  ],
-};
 
 describe("DeadlineEscrow", function () {
   async function deployFixture() {
@@ -79,6 +68,11 @@ describe("DeadlineEscrow", function () {
       fundingDeadline,
       settlementDeadline,
     };
+    const envelope = {
+      chainId,
+      verifyingContract: await escrow.getAddress(),
+      authorization: message,
+    };
 
     return {
       buyer,
@@ -95,6 +89,7 @@ describe("DeadlineEscrow", function () {
       milestoneAmount,
       domain,
       message,
+      envelope,
     };
   }
 
@@ -102,21 +97,25 @@ describe("DeadlineEscrow", function () {
     const fixture = await deployFixture();
     const buyerSignature = await fixture.buyer.signTypedData(
       fixture.domain,
-      authorizationTypes,
+      dealAuthorizationTypes,
       fixture.message,
     );
     const sellerSignature = await fixture.seller.signTypedData(
       fixture.domain,
-      authorizationTypes,
+      dealAuthorizationTypes,
       fixture.message,
     );
     const playerSignature = await fixture.player.signTypedData(
       fixture.domain,
-      authorizationTypes,
+      dealAuthorizationTypes,
       fixture.message,
     );
 
     await fixture.token.mint(fixture.buyer.address, fixture.totalAmount);
+
+    expect(await fixture.escrow.authorizationDigest()).to.equal(
+      hashDealAuthorization(fixture.envelope),
+    );
     await fixture.token
       .connect(fixture.buyer)
       .approve(await fixture.escrow.getAddress(), fixture.totalAmount);
@@ -160,12 +159,12 @@ describe("DeadlineEscrow", function () {
     const fixture = await deployFixture();
     const buyerSignature = await fixture.buyer.signTypedData(
       fixture.domain,
-      authorizationTypes,
+      dealAuthorizationTypes,
       fixture.message,
     );
     const sellerSignature = await fixture.seller.signTypedData(
       fixture.domain,
-      authorizationTypes,
+      dealAuthorizationTypes,
       fixture.message,
     );
 
@@ -202,7 +201,7 @@ describe("DeadlineEscrow", function () {
       [fixture.buyer, fixture.seller, fixture.player].map((signer) =>
         signer.signTypedData(
           fixture.domain,
-          authorizationTypes,
+          dealAuthorizationTypes,
           fixture.message,
         ),
       ),

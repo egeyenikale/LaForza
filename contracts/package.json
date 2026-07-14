@@ -9,6 +9,7 @@
     "typecheck": "HOME=$PWD/.hardhat-home hardhat compile && tsc --noEmit"
   },
   "dependencies": {
+    "@laforza/protocol": "*",
     "@openzeppelin/contracts": "^5.4.0"
   },
   "devDependencies": {

@@ -1,8 +1,12 @@
-import type { AgentPolicy, Offer } from "@laforza/domain";
-import { verifyTypedData } from "ethers";
+import type { AgentPolicy } from "@laforza/domain";
+import {
+  buildDealAuthorizationTypedData,
+  hashDealAuthorization,
+  type DealAuthorizationEnvelope,
+} from "@laforza/protocol";
+import { keccak256, toUtf8Bytes, verifyTypedData } from "ethers";
 import { describe, expect, it } from "vitest";
 
-import { buildOfferTypedData } from "./deal-typed-data.js";
 import { WdkDealAgent } from "./wdk-deal-agent.js";
 
 const counterparty = "0x2222222222222222222222222222222222222222";
@@ -10,79 +14,74 @@ const escrow = "0x1111111111111111111111111111111111111111";
 const now = new Date("2026-07-15T00:00:00.000Z");
 
 const policy: AgentPolicy = {
-  maxDealMicroUsdt: 1_500_000_000,
-  humanApprovalThresholdMicroUsdt: 1_000_000_000,
+  maxDealMicroUsdt: 1_000_000_000,
+  humanApprovalThresholdMicroUsdt: 750_000_000,
   allowedCounterparties: [counterparty],
   expiresAt: "2026-07-16T00:00:00.000Z",
 };
 
-function offer(totalMicroUsdt: number): Offer {
+function envelope(totalAmount: bigint): DealAuthorizationEnvelope {
   return {
-    id: "11111111-1111-4111-8111-111111111111",
-    dealId: "22222222-2222-4222-8222-222222222222",
-    proposer: "BUYING_CLUB",
-    counterparty,
-    totalMicroUsdt,
-    signingBonusMicroUsdt: 250_000_000,
-    milestones: [
-      {
-        id: "appearance-10",
-        label: "Ten first-team appearances",
-        kind: "APPEARANCE",
-        threshold: 10,
-        amountMicroUsdt: 250_000_000,
-      },
-    ],
-    nonce: 1,
-    expiresAt: "2026-07-15T12:00:00.000Z",
-    createdAt: "2026-07-15T00:00:00.000Z",
+    chainId: 11_155_111,
+    verifyingContract: escrow,
+    authorization: {
+      dealId: keccak256(toUtf8Bytes("deadline-demo")),
+      buyer: "0x3333333333333333333333333333333333333333",
+      seller: counterparty,
+      player: "0x4444444444444444444444444444444444444444",
+      token: "0x5555555555555555555555555555555555555555",
+      totalAmount,
+      signingBonus: 250_000_000n,
+      milestoneRoot: keccak256(toUtf8Bytes("milestones")),
+      fundingDeadline: 1_784_150_000n,
+      settlementDeadline: 1_784_236_400n,
+    },
   };
 }
 
 describe("WDK deal agent", () => {
-  it("denies an offer above the club's hard maximum", async () => {
-    const result = await new WdkDealAgent().evaluateOffer({
+  it("denies an authorization above the club's hard maximum", async () => {
+    const result = await new WdkDealAgent().evaluateAuthorization({
       policy,
-      offer: offer(1_600_000_000),
-      chainId: 11_155_111,
-      verifyingContract: escrow,
+      envelope: envelope(1_100_000_000n),
+      counterparty,
       now,
     });
 
     expect(result).toMatchObject({
       decision: "DENY",
       matched_rule: "deny-over-budget",
-      reason: "Offer exceeds the club's maximum deal mandate",
+      reason: "Authorization exceeds the club's maximum deal mandate",
     });
   });
 
-  it("routes a mid-sized offer to human approval", async () => {
-    const result = await new WdkDealAgent().evaluateOffer({
+  it("routes a mid-sized authorization to human approval", async () => {
+    const result = await new WdkDealAgent().evaluateAuthorization({
       policy,
-      offer: offer(1_200_000_000),
-      chainId: 11_155_111,
-      verifyingContract: escrow,
+      envelope: envelope(900_000_000n),
+      counterparty,
       now,
     });
 
     expect(result).toMatchObject({
       decision: "DENY",
       matched_rule: "require-human-approval",
-      reason: "Offer requires human sporting-director approval",
+      reason: "Authorization requires human sporting-director approval",
     });
   });
 
-  it("signs an allowed EIP-712 offer with the policy-governed WDK account", async () => {
-    const allowedOffer = offer(900_000_000);
-    const result = await new WdkDealAgent().evaluateOffer({
+  it("signs only the exact human-approved EIP-712 authorization", async () => {
+    const approvedEnvelope = envelope(900_000_000n);
+    const digest = hashDealAuthorization(approvedEnvelope);
+    const result = await new WdkDealAgent().evaluateAuthorization({
       policy,
-      offer: allowedOffer,
-      chainId: 11_155_111,
-      verifyingContract: escrow,
+      envelope: approvedEnvelope,
+      counterparty,
       now,
+      humanApprovedDigest: digest,
       sign: true,
     });
-    const typedData = buildOfferTypedData(allowedOffer, 11_155_111, escrow);
+    const typedData = buildDealAuthorizationTypedData(approvedEnvelope);
     const recovered = verifyTypedData(
       typedData.domain,
       typedData.types,
@@ -91,7 +90,7 @@ describe("WDK deal agent", () => {
     );
 
     expect(result.decision).toBe("ALLOW");
-    expect(result.matched_rule).toBe("allow-mandated-offer");
+    expect(result.authorizationDigest).toBe(digest);
     expect(recovered.toLowerCase()).toBe(result.agentAddress.toLowerCase());
   });
 });
