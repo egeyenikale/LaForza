@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "HOME=$PWD/.hardhat-home hardhat compile",
+    "node": "HOME=$PWD/.hardhat-home hardhat node --hostname 127.0.0.1",
     "test": "HOME=$PWD/.hardhat-home hardhat test",
     "typecheck": "HOME=$PWD/.hardhat-home hardhat compile && tsc --noEmit"
   },

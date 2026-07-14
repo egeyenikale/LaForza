@@ -1,0 +1,628 @@
+import type { AgentPolicy } from "@laforza/domain";
+import {
+  hashDealAuthorization,
+  hashMilestones,
+  type DealAuthorizationEnvelope,
+  type DealMilestoneAuthorization,
+} from "@laforza/protocol";
+import WDK, { type Policy } from "@tetherto/wdk";
+import WalletManagerEvm from "@tetherto/wdk-wallet-evm";
+import {
+  Contract,
+  ContractFactory,
+  Interface,
+  JsonRpcProvider,
+  NonceManager,
+  Wallet,
+  id,
+  keccak256,
+  parseEther,
+  toUtf8Bytes,
+  type InterfaceAbi,
+  type TransactionReceipt,
+} from "ethers";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+import { WdkDealAgent } from "../agents/wdk-deal-agent.js";
+import type { AppConfig } from "../config.js";
+import { EventStore } from "../events/event-store.js";
+import {
+  LocalWalletVault,
+  type PublicWallet,
+  type WalletRole,
+} from "../wallets/local-wallet-vault.js";
+
+const USDT = 1_000_000n;
+const TOTAL_AMOUNT = 900n * USDT;
+const SIGNING_BONUS = 250n * USDT;
+const MILESTONE_AMOUNT = 650n * USDT;
+const BUYER_MAXIMUM = 1_000n * USDT;
+const HUMAN_APPROVAL_THRESHOLD = 750n * USDT;
+
+type Artifact = {
+  abi: InterfaceAbi;
+  bytecode: string;
+};
+
+type DemoSignatures = Partial<Record<"BUYER" | "SELLER" | "PLAYER", string>>;
+
+type DemoRuntime = {
+  wallets: PublicWallet[];
+  tokenAddress: string;
+  escrowAddress: string;
+  envelope: DealAuthorizationEnvelope;
+  milestone: DealMilestoneAuthorization;
+  signatures: DemoSignatures;
+  humanApprovedDigest?: string;
+  transactions: Record<string, string>;
+};
+
+type EvmWdkAccount = {
+  approve(input: {
+    token: string;
+    spender: string;
+    amount: bigint;
+  }): Promise<{ hash: string }>;
+  sendTransaction(input: {
+    to: string;
+    value: bigint;
+    data: string;
+  }): Promise<{ hash: string }>;
+};
+
+function roleAddress(wallets: PublicWallet[], role: WalletRole): string {
+  const wallet = wallets.find((candidate) => candidate.role === role);
+  if (!wallet) throw new Error(`Missing ${role} wallet`);
+  return wallet.address;
+}
+
+function jsonBigInt(value: bigint): string {
+  return value.toString();
+}
+
+export class DemoService {
+  readonly #provider: JsonRpcProvider;
+  readonly #vault: LocalWalletVault;
+  readonly #events: EventStore;
+  #runtime?: DemoRuntime;
+
+  constructor(private readonly config: AppConfig) {
+    this.#provider = new JsonRpcProvider(config.CHAIN_RPC_URL, config.CHAIN_ID);
+    this.#vault = new LocalWalletVault(join(config.DATA_DIR, "wallets.json"));
+    this.#events = new EventStore(join(config.DATA_DIR, "events.jsonl"));
+  }
+
+  async bootstrap(passkey: string): Promise<Record<string, unknown>> {
+    await this.#provider.getBlockNumber();
+    const wallets = (await this.#vault.exists())
+      ? await this.#vault.list(passkey)
+      : await this.#vault.create(passkey);
+    const buyer = roleAddress(wallets, "BUYER");
+    const seller = roleAddress(wallets, "SELLER");
+    const player = roleAddress(wallets, "PLAYER");
+    const verifier = roleAddress(wallets, "VERIFIER");
+
+    const deployer = new NonceManager(
+      new Wallet(this.config.LOCAL_DEPLOYER_PRIVATE_KEY, this.#provider),
+    );
+    const [tokenArtifact, escrowArtifact] = await Promise.all([
+      this.#readArtifact("contracts/test/MockUSDT.sol/MockUSDT.json"),
+      this.#readArtifact("contracts/DeadlineEscrow.sol/DeadlineEscrow.json"),
+    ]);
+    const token = await new ContractFactory(
+      tokenArtifact.abi,
+      tokenArtifact.bytecode,
+      deployer,
+    ).deploy();
+    await token.waitForDeployment();
+    const tokenAddress = await token.getAddress();
+
+    const now = Math.floor(Date.now() / 1000);
+    const fundingDeadline = BigInt(now + 2 * 60 * 60);
+    const settlementDeadline = BigInt(now + 24 * 60 * 60);
+    const milestone: DealMilestoneAuthorization = {
+      id: id("appearance-1"),
+      threshold: 1n,
+      amount: MILESTONE_AMOUNT,
+      beneficiary: seller,
+    };
+    const dealId = id(`laforza-demo-${now}`);
+    const escrow = await new ContractFactory(
+      escrowArtifact.abi,
+      escrowArtifact.bytecode,
+      deployer,
+    ).deploy(
+      tokenAddress,
+      buyer,
+      seller,
+      player,
+      verifier,
+      dealId,
+      TOTAL_AMOUNT,
+      SIGNING_BONUS,
+      fundingDeadline,
+      settlementDeadline,
+      [milestone],
+    );
+    await escrow.waitForDeployment();
+    const escrowAddress = await escrow.getAddress();
+
+    for (const address of [buyer, verifier]) {
+      const funding = await deployer.sendTransaction({
+        to: address,
+        value: parseEther("5"),
+      });
+      await funding.wait();
+    }
+    const mint = await token.getFunction("mint")(buyer, 2_000n * USDT);
+    await mint.wait();
+
+    const envelope: DealAuthorizationEnvelope = {
+      chainId: this.config.CHAIN_ID,
+      verifyingContract: escrowAddress,
+      authorization: {
+        dealId,
+        buyer,
+        seller,
+        player,
+        token: tokenAddress,
+        totalAmount: TOTAL_AMOUNT,
+        signingBonus: SIGNING_BONUS,
+        milestoneRoot: hashMilestones([milestone]),
+        fundingDeadline,
+        settlementDeadline,
+      },
+    };
+    const contractDigest = await escrow.getFunction("authorizationDigest")();
+    const localDigest = hashDealAuthorization(envelope);
+    if (contractDigest !== localDigest) {
+      throw new Error("Canonical authorization digest mismatch");
+    }
+
+    this.#runtime = {
+      wallets,
+      tokenAddress,
+      escrowAddress,
+      envelope,
+      milestone,
+      signatures: {},
+      transactions: {},
+    };
+    await this.#events.clear();
+    await this.#events.append("DEMO_BOOTSTRAPPED", {
+      chainId: this.config.CHAIN_ID,
+      tokenAddress,
+      escrowAddress,
+      authorizationDigest: localDigest,
+      note: "Local test chain only — no real funds",
+    });
+    return this.state();
+  }
+
+  async attemptOverBudget(passkey: string): Promise<Record<string, unknown>> {
+    const runtime = this.#requireRuntime();
+    const envelope: DealAuthorizationEnvelope = {
+      ...runtime.envelope,
+      authorization: {
+        ...runtime.envelope.authorization,
+        totalAmount: 1_100n * USDT,
+      },
+    };
+    const result = await this.#evaluateBuyer(passkey, envelope);
+    await this.#events.append("POLICY_DENIED_OVER_BUDGET", {
+      amountMicroUsdt: "1100000000",
+      decision: result.decision,
+      reason: result.reason,
+      rule: result.matched_rule,
+    });
+    return this.state();
+  }
+
+  async reviewCounter(passkey: string): Promise<Record<string, unknown>> {
+    const runtime = this.#requireRuntime();
+    const result = await this.#evaluateBuyer(passkey, runtime.envelope);
+    await this.#events.append("HUMAN_APPROVAL_REQUIRED", {
+      amountMicroUsdt: jsonBigInt(TOTAL_AMOUNT),
+      decision: result.decision,
+      reason: result.reason,
+      authorizationDigest: result.authorizationDigest,
+    });
+    return this.state();
+  }
+
+  async approveAndSignBuyer(passkey: string): Promise<Record<string, unknown>> {
+    const runtime = this.#requireRuntime();
+    const digest = hashDealAuthorization(runtime.envelope);
+    runtime.humanApprovedDigest = digest;
+    const result = await this.#evaluateBuyer(
+      passkey,
+      runtime.envelope,
+      digest,
+      true,
+    );
+    if (!result.signature)
+      throw new Error("Buyer authorization was not signed");
+    runtime.signatures.BUYER = result.signature;
+    await this.#events.append("BUYER_AUTHORIZATION_SIGNED", {
+      signer: roleAddress(runtime.wallets, "BUYER"),
+      authorizationDigest: digest,
+      policyDecision: result.decision,
+    });
+    return this.state();
+  }
+
+  async signParty(
+    role: "SELLER" | "PLAYER",
+    passkey: string,
+  ): Promise<Record<string, unknown>> {
+    const runtime = this.#requireRuntime();
+    const counterparty = roleAddress(runtime.wallets, "BUYER");
+    const policy = this.#partyPolicy(counterparty, runtime.envelope);
+    const result = await this.#vault.withSeed(role, passkey, (seed) =>
+      new WdkDealAgent(seed).evaluateAuthorization({
+        policy,
+        envelope: runtime.envelope,
+        counterparty,
+        sign: true,
+      }),
+    );
+    if (!result.signature)
+      throw new Error(`${role} authorization was not signed`);
+    runtime.signatures[role] = result.signature;
+    await this.#events.append(`${role}_AUTHORIZATION_SIGNED`, {
+      signer: roleAddress(runtime.wallets, role),
+      authorizationDigest: result.authorizationDigest,
+      policyDecision: result.decision,
+    });
+    return this.state();
+  }
+
+  async fund(passkey: string): Promise<Record<string, unknown>> {
+    const runtime = this.#requireRuntime();
+    const { BUYER, SELLER, PLAYER } = runtime.signatures;
+    if (!BUYER || !SELLER || !PLAYER) {
+      throw new Error("Buyer, seller, and player signatures are required");
+    }
+    const escrowInterface = await this.#escrowInterface();
+    const fundData = escrowInterface.encodeFunctionData("fund", [
+      BUYER,
+      SELLER,
+      PLAYER,
+    ]);
+    const transactions = await this.#vault.withSeed(
+      "BUYER",
+      passkey,
+      async (seed) => {
+        const approvalWdk = new WDK(seed)
+          .registerWallet("evm", WalletManagerEvm, {
+            provider: this.config.CHAIN_RPC_URL,
+            chainId: this.config.CHAIN_ID,
+            transactionMaxFee: parseEther("1"),
+          })
+          .registerPolicy(this.#buyerApprovalPolicy(runtime));
+        let approvalHash: string;
+        try {
+          const account = (await approvalWdk.getAccount(
+            "evm",
+            0,
+          )) as unknown as EvmWdkAccount;
+          const approval = await account.approve({
+            token: runtime.tokenAddress,
+            spender: runtime.escrowAddress,
+            amount: TOTAL_AMOUNT,
+          });
+          await this.#wait(approval.hash);
+          approvalHash = approval.hash;
+        } finally {
+          approvalWdk.dispose();
+        }
+
+        const fundingWdk = new WDK(seed)
+          .registerWallet("evm", WalletManagerEvm, {
+            provider: this.config.CHAIN_RPC_URL,
+            chainId: this.config.CHAIN_ID,
+            transactionMaxFee: parseEther("1"),
+          })
+          .registerPolicy(this.#buyerFundingPolicy(runtime, fundData));
+        try {
+          const account = (await fundingWdk.getAccount(
+            "evm",
+            0,
+          )) as unknown as EvmWdkAccount;
+          const funding = await account.sendTransaction({
+            to: runtime.escrowAddress,
+            value: 0n,
+            data: fundData,
+          });
+          await this.#wait(funding.hash);
+          return { approval: approvalHash, funding: funding.hash };
+        } finally {
+          fundingWdk.dispose();
+        }
+      },
+    );
+    runtime.transactions.approval = transactions.approval;
+    runtime.transactions.funding = transactions.funding;
+    await this.#events.append("ESCROW_FUNDED", {
+      approveTxHash: transactions.approval,
+      fundingTxHash: transactions.funding,
+      signingBonusMicroUsdt: jsonBigInt(SIGNING_BONUS),
+    });
+    return this.state();
+  }
+
+  async releaseMilestone(passkey: string): Promise<Record<string, unknown>> {
+    const runtime = this.#requireRuntime();
+    const escrowInterface = await this.#escrowInterface();
+    const evidenceHash = keccak256(
+      toUtf8Bytes("LaForza demo match report: appearance verified"),
+    );
+    const data = escrowInterface.encodeFunctionData("releaseMilestone", [
+      runtime.milestone.id,
+      evidenceHash,
+    ]);
+    const transactionHash = await this.#vault.withSeed(
+      "VERIFIER",
+      passkey,
+      async (seed) => {
+        const wdk = new WDK(seed)
+          .registerWallet("evm", WalletManagerEvm, {
+            provider: this.config.CHAIN_RPC_URL,
+            chainId: this.config.CHAIN_ID,
+            transactionMaxFee: parseEther("1"),
+          })
+          .registerPolicy(this.#verifierExecutionPolicy(runtime, data));
+        try {
+          const account = (await wdk.getAccount(
+            "evm",
+            0,
+          )) as unknown as EvmWdkAccount;
+          const transaction = await account.sendTransaction({
+            to: runtime.escrowAddress,
+            value: 0n,
+            data,
+          });
+          await this.#wait(transaction.hash);
+          return transaction.hash;
+        } finally {
+          wdk.dispose();
+        }
+      },
+    );
+    runtime.transactions.release = transactionHash;
+    await this.#events.append("MILESTONE_RELEASED", {
+      transactionHash,
+      milestoneId: runtime.milestone.id,
+      evidenceHash,
+      amountMicroUsdt: jsonBigInt(MILESTONE_AMOUNT),
+    });
+    return this.state();
+  }
+
+  async state(): Promise<Record<string, unknown>> {
+    const events = await this.#events.list();
+    if (!this.#runtime) return { initialized: false, events };
+    const runtime = this.#runtime;
+    const tokenArtifact = await this.#readArtifact(
+      "contracts/test/MockUSDT.sol/MockUSDT.json",
+    );
+    const escrowArtifact = await this.#readArtifact(
+      "contracts/DeadlineEscrow.sol/DeadlineEscrow.json",
+    );
+    const token = new Contract(
+      runtime.tokenAddress,
+      tokenArtifact.abi,
+      this.#provider,
+    );
+    const escrow = new Contract(
+      runtime.escrowAddress,
+      escrowArtifact.abi,
+      this.#provider,
+    );
+    const balances = Object.fromEntries(
+      await Promise.all(
+        runtime.wallets.map(async ({ role, address }) => [
+          role,
+          jsonBigInt(await token.getFunction("balanceOf")(address)),
+        ]),
+      ),
+    );
+    balances.ESCROW = jsonBigInt(
+      await token.getFunction("balanceOf")(runtime.escrowAddress),
+    );
+
+    return {
+      initialized: true,
+      network: {
+        name: "Hardhat Local",
+        chainId: this.config.CHAIN_ID,
+        rpcUrl: this.config.CHAIN_RPC_URL,
+        disclaimer: "Demo-only test USDT. No real funds or mainnet assets.",
+      },
+      deal: {
+        title: "Atlas FC × Bosphorus United — International Registration",
+        playerName: "Mert Kaya",
+        totalAmountMicroUsdt: jsonBigInt(TOTAL_AMOUNT),
+        signingBonusMicroUsdt: jsonBigInt(SIGNING_BONUS),
+        milestoneAmountMicroUsdt: jsonBigInt(MILESTONE_AMOUNT),
+        authorizationDigest: hashDealAuthorization(runtime.envelope),
+        humanApprovalThresholdMicroUsdt: jsonBigInt(HUMAN_APPROVAL_THRESHOLD),
+        maximumMandateMicroUsdt: jsonBigInt(BUYER_MAXIMUM),
+      },
+      contracts: {
+        token: runtime.tokenAddress,
+        escrow: runtime.escrowAddress,
+      },
+      wallets: runtime.wallets,
+      signatures: Object.keys(runtime.signatures),
+      humanApproved: Boolean(runtime.humanApprovedDigest),
+      transactions: runtime.transactions,
+      chainState: {
+        funded: await escrow.getFunction("funded")(),
+        releasedAmountMicroUsdt: jsonBigInt(
+          await escrow.getFunction("releasedAmount")(),
+        ),
+        balances,
+      },
+      events,
+    };
+  }
+
+  async #evaluateBuyer(
+    passkey: string,
+    envelope: DealAuthorizationEnvelope,
+    humanApprovedDigest?: string,
+    sign = false,
+  ) {
+    const runtime = this.#requireRuntime();
+    const counterparty = roleAddress(runtime.wallets, "SELLER");
+    return this.#vault.withSeed("BUYER", passkey, (seed) =>
+      new WdkDealAgent(seed).evaluateAuthorization({
+        policy: this.#buyerPolicy(counterparty, runtime.envelope),
+        envelope,
+        counterparty,
+        ...(humanApprovedDigest ? { humanApprovedDigest } : {}),
+        sign,
+      }),
+    );
+  }
+
+  #buyerPolicy(
+    counterparty: string,
+    envelope: DealAuthorizationEnvelope,
+  ): AgentPolicy {
+    return {
+      maxDealMicroUsdt: Number(BUYER_MAXIMUM),
+      humanApprovalThresholdMicroUsdt: Number(HUMAN_APPROVAL_THRESHOLD),
+      allowedCounterparties: [counterparty],
+      expiresAt: new Date(
+        Number(envelope.authorization.fundingDeadline) * 1000,
+      ).toISOString(),
+    };
+  }
+
+  #partyPolicy(
+    counterparty: string,
+    envelope: DealAuthorizationEnvelope,
+  ): AgentPolicy {
+    return {
+      maxDealMicroUsdt: Number(BUYER_MAXIMUM),
+      humanApprovalThresholdMicroUsdt: Number(BUYER_MAXIMUM),
+      allowedCounterparties: [counterparty],
+      expiresAt: new Date(
+        Number(envelope.authorization.fundingDeadline) * 1000,
+      ).toISOString(),
+    };
+  }
+
+  #buyerApprovalPolicy(runtime: DemoRuntime): Policy {
+    return {
+      id: "buyer-approval-policy",
+      name: "Exact token approval only",
+      scope: "project",
+      wallet: "evm",
+      rules: [
+        {
+          name: "allow-exact-usdt-approval",
+          operation: "approve",
+          action: "ALLOW",
+          conditions: [
+            ({ params }) => {
+              const input = params as Record<string, unknown>;
+              return (
+                String(input.token).toLowerCase() ===
+                  runtime.tokenAddress.toLowerCase() &&
+                String(input.spender).toLowerCase() ===
+                  runtime.escrowAddress.toLowerCase() &&
+                BigInt(String(input.amount)) === TOTAL_AMOUNT
+              );
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  #buyerFundingPolicy(runtime: DemoRuntime, fundData: string): Policy {
+    return {
+      id: "buyer-funding-policy",
+      name: "Canonical escrow funding only",
+      scope: "project",
+      wallet: "evm",
+      rules: [
+        {
+          name: "allow-canonical-fund-call",
+          operation: "sendTransaction",
+          action: "ALLOW",
+          conditions: [
+            ({ params }) => {
+              const input = params as Record<string, unknown>;
+              return (
+                String(input.to).toLowerCase() ===
+                  runtime.escrowAddress.toLowerCase() &&
+                BigInt(String(input.value)) === 0n &&
+                input.data === fundData
+              );
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  #verifierExecutionPolicy(runtime: DemoRuntime, data: string): Policy {
+    return {
+      id: "verifier-execution-policy",
+      name: "Verifier can release only the proven milestone",
+      scope: "project",
+      wallet: "evm",
+      rules: [
+        {
+          name: "allow-exact-milestone-release",
+          operation: "sendTransaction",
+          action: "ALLOW",
+          conditions: [
+            ({ params }) => {
+              const input = params as Record<string, unknown>;
+              return (
+                String(input.to).toLowerCase() ===
+                  runtime.escrowAddress.toLowerCase() &&
+                BigInt(String(input.value)) === 0n &&
+                input.data === data
+              );
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  #requireRuntime(): DemoRuntime {
+    if (!this.#runtime) throw new Error("Demo is not initialized");
+    return this.#runtime;
+  }
+
+  async #readArtifact(relativePath: string): Promise<Artifact> {
+    const content = await readFile(
+      join(this.config.CONTRACT_ARTIFACTS_DIR, relativePath),
+      "utf8",
+    );
+    return JSON.parse(content) as Artifact;
+  }
+
+  async #escrowInterface(): Promise<Interface> {
+    const artifact = await this.#readArtifact(
+      "contracts/DeadlineEscrow.sol/DeadlineEscrow.json",
+    );
+    return new Interface(artifact.abi);
+  }
+
+  async #wait(hash: string): Promise<TransactionReceipt> {
+    const receipt = await this.#provider.waitForTransaction(hash);
+    if (!receipt || receipt.status !== 1) {
+      throw new Error(`Transaction failed: ${hash}`);
+    }
+    return receipt;
+  }
+}
