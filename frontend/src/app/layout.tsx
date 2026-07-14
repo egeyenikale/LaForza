@@ -4,9 +4,9 @@ import type { ReactNode } from "react";
 import "./styles.css";
 
 export const metadata: Metadata = {
-  title: "DEADLINE — Agentic Football Deal Room",
+  title: "La Forza — Self-Custodial Football Deal Room",
   description:
-    "Policy-bound club agent wallets and programmable USD₮ football deals.",
+    "Policy-bound WDK wallets and programmable test USD₮ football deals.",
 };
 
 export default function RootLayout({

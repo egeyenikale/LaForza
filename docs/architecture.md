@@ -1,64 +1,65 @@
 # Architecture
 
-## Product boundary
+## One canonical deal
 
-DEADLINE demonstrates a single verifiable flow:
+La Forza proves one narrow flow end to end:
 
-1. A selling club publishes minimum acceptable deal terms.
-2. A buying-club agent negotiates under a human-authored wallet policy.
-3. An over-budget offer is rejected before signing.
-4. Buyer, seller, and player sign one canonical deal payload.
-5. USD₮ is locked in escrow.
-6. Signing and appearance milestones release deterministic payouts.
-
-It does not claim to replace governing bodies, identity checks, employment law, or regulated transfer infrastructure.
+1. A buyer agent rejects 1,100 USD₮ because the club mandate stops at 1,000.
+2. A 900 USD₮ counteroffer reaches the explicit 750 USD₮ human threshold.
+3. The sporting director approves one exact EIP-712 digest.
+4. Buyer, seller, and player sign that same digest with separate WDK accounts.
+5. The buyer's WDK account approves test USD₮ and funds the escrow.
+6. The contract immediately releases a 250 test USD₮ signing bonus.
+7. The named verifier submits evidence and releases the 650 test USD₮ milestone.
 
 ## Components
 
 ```text
-┌──────────────────────────┐
-│ Next.js deal-room UI     │
-└────────────┬─────────────┘
-             │ HTTPS / JSON
-┌────────────▼─────────────┐
-│ Fastify orchestration    │
-│ - deal state machine     │
-│ - policy evaluation      │
-│ - typed payload builder  │
-└───────┬─────────┬────────┘
-        │         │
-        │         └─────────────┐
-┌───────▼────────┐     ┌────────▼──────────┐
-│ Tether WDK     │     │ DealEscrow.sol    │
-│ local signing  │     │ on-chain custody  │
-└────────────────┘     └───────────────────┘
+┌────────────────────────────┐
+│ Next.js football deal room │
+│ controls + signed evidence │
+└─────────────┬──────────────┘
+              │ HTTP / JSON
+┌─────────────▼──────────────┐
+│ Fastify orchestration      │
+│ encrypted vault · events   │
+└──────┬───────────┬─────────┘
+       │           │ JSON-RPC reads/deploy
+┌──────▼───────┐   ▼
+│ Tether WDK   │   Local Hardhat EVM
+│ policy/sign  │──▶ MockUSDT + DeadlineEscrow
+│ approve/send │
+└──────────────┘
 ```
 
-## Trust boundaries
+## Trust boundaries and invariants
 
-- A local WDK policy is a pre-execution guard, not on-chain authorization.
-- Offer signing is itself policy-governed: the WDK `signTypedData` simulation
-  checks the deal amount, human approval threshold, counterparty allowlist,
-  expiry, chain ID, and verifying escrow contract before a signature exists.
-- The escrow contract independently enforces funded amounts and milestone release ceilings.
-- The backend may coordinate and relay public data but cannot fabricate participant signatures.
-- Every offer includes a nonce, expiry, chain ID, and deal ID to prevent replay across deals or networks.
-- Monetary values use integer micro-USD₮ units. Floating-point values are forbidden in the domain.
-- State changes are append-only events; projections can be rebuilt from those events.
+- The frontend never receives a seed phrase or private key.
+- Four BIP-39 phrases are encrypted with passkey-derived scrypt keys and
+  AES-256-GCM. Only addresses, salts, IVs, tags, and ciphertext are persisted.
+- Human approval is bound to the exact authorization digest, not merely an
+  amount or UI session.
+- WDK's policy proxy defaults to denial. Separate short-lived WDK sessions permit
+  only exact `approve` and `sendTransaction` parameter sets.
+- Buyer, seller, and player signatures cover chain ID, escrow address, deal ID,
+  actors, token, amounts, milestone root, and both deadlines.
+- The contract rechecks all three signatures before custody changes.
+- Only the named verifier can release the named milestone; double release and
+  zero evidence are rejected.
+- Money uses integer micro-USD₮ units. Floating-point values never cross a
+  financial boundary.
+- Demo events are append-only JSONL. On-chain balances remain the settlement
+  source of truth.
 
-## Domain state machine
+## Track boundary
 
-```text
-DRAFT → NEGOTIATING → AWAITING_SIGNATURES → READY_TO_FUND
-                                           ↓
-                                      FUNDED → ACTIVE → COMPLETED
+The current entry uses WDK deeply and does not claim Pears or QVAC. A future P2P
+transport could replicate signed public events, but it is not part of this
+submission proof and is not represented in the UI.
 
-Any pre-funding state may become CANCELLED. Funded cancellation requires the contract's refund path.
-```
+## Deployment boundary
 
-## Initial deployment target
-
-- Ethereum Sepolia
-- Test USD₮ with six decimals
-- ERC-4337/gasless execution where the selected WDK module supports it
-- EIP-712 deal and offer signatures
+The judge path is a deterministic local Hardhat chain using a six-decimal
+`MockUSDT`. The local deployer key is public test material. Moving to a testnet
+requires explicit RPC, funded test gas, deployed token addresses, a deployment
+record, and separate operational review; none of that is implied by this demo.

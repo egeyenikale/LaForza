@@ -1,22 +1,45 @@
-# Eight-hour demo scope
+# Judge demo runbook
 
-## Must ship
+## Start
 
-- Two club agents with visibly different policies
-- One player signer
-- Signed offer/counter-offer event log
-- A blocked over-budget action with the exact policy reason
-- A three-party accepted deal
-- Testnet USD₮ escrow funding
-- Signing-bonus release
-- One appearance-milestone release
-- Explorer links and a reproducible local demo
+```bash
+npm install
+npm run demo
+```
+
+Open `http://localhost:3000`, keep the prefilled local passkey, and select
+**Deploy local deal**.
+
+## Seven visible proofs
+
+1. **Try 1,100 USD₮** — WDK reports `DENY` and the `deny-over-budget` rule.
+2. **Counter at 900 USD₮** — WDK requires human sporting-director approval.
+3. **Director approves** — the buyer signs only the approved canonical digest.
+4. **Seller signs** — the selling-club WDK account signs the same digest.
+5. **Player signs** — the player account completes the required signer set.
+6. **Fund escrow** — WDK broadcasts an ERC-20 approval and escrow funding
+   transaction. The player balance becomes 250 test USD₮.
+7. **Verify appearance** — the verifier broadcasts milestone evidence. The seller
+   balance becomes 650 test USD₮ and the escrow balance returns to zero.
+
+The audit trail, actor balances, contract addresses, authorization digest, and
+all three write transaction hashes are visible on the page.
+
+## Expected final state
+
+```text
+Buyer      1,100 test USD₮
+Seller       650 test USD₮
+Player       250 test USD₮
+Escrow         0 test USD₮
+Released      900 test USD₮
+```
 
 ## Explicitly out of scope
 
-- Player discovery marketplace
-- Legal identity/KYC claims
-- Mainnet funds
-- FIFA/association integration
-- Unverifiable AI negotiation
-- More than one milestone oracle design
+- Mainnet or real USD₮
+- FIFA/association registration or legal enforceability
+- KYC, employment-law, or securities claims
+- A cloud custodian or hosted signing service
+- Pears and QVAC track claims
+- More than one verifier/evidence design

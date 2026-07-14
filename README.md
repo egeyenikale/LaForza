@@ -1,74 +1,80 @@
-# LaForza / DEADLINE
+# La Forza
 
-**Two clubs. Two policy-bound agent wallets. One signed deal before the window closes.**
+**Policy-bound football deals. Self-custodial keys. Verifiable test USD₮ settlement.**
 
-DEADLINE is a self-custodial football deal room built for the Tether Developers Cup. Club agents negotiate inside human-defined budgets, all parties sign the same terms, and a smart-contract escrow releases USD₮ against explicit milestones.
+La Forza is a working football registration deal room built for the Tether
+Developers Cup. A buying-club agent negotiates inside a human-authored mandate;
+buyer, seller, and player sign one canonical authorization; a Solidity escrow
+then pays a signing bonus and an evidence-backed milestone.
+
+## Run the complete demo
+
+Requirements: Node.js 22.17+ and npm 10.9+.
+
+```bash
+npm install
+npm run demo
+```
+
+Open [http://localhost:3000](http://localhost:3000). The command starts:
+
+- a local Hardhat EVM chain on `127.0.0.1:8545`;
+- the Fastify API on `127.0.0.1:4000`;
+- the Next.js deal room on `localhost:3000`.
+
+Click the seven deal-room actions in order. They demonstrate a policy rejection,
+a human approval boundary, three EIP-712 signatures, a WDK token approval, escrow
+funding, and verifier-only milestone release. Every amount is local **test USD₮**;
+there are no real funds.
+
+## Why this is a real WDK entry
+
+WDK is load-bearing in three places:
+
+1. **Policy-bound authorization** — `@tetherto/wdk` simulates and enforces the
+   buying club's `signTypedData` rules. A 1,100 USD₮ proposal is denied by the
+   1,000 USD₮ ceiling. A 900 USD₮ proposal requires approval of its exact digest.
+2. **Self-custodial signers** — buyer, seller, player, and verifier are distinct
+   `@tetherto/wdk-wallet-evm` accounts. Their BIP-39 phrases are AES-256-GCM
+   encrypted locally with a passkey and never returned by the API.
+3. **Wallet execution** — narrowly scoped WDK policies allow only the exact test
+   token approval, canonical escrow funding call, and evidence-bound milestone
+   release. The UI exposes the resulting transaction hashes and balances.
+
+The TypeScript protocol package and Solidity contract independently compute the
+same EIP-712 digest. Contract tests fail if the two formats drift.
+
+## Track position
+
+La Forza targets **WDK (Wallets)** and the football/global-tournament theme.
+It does not claim Pears or QVAC usage. This is intentional: one deeply integrated,
+judge-runnable track is stronger than decorative SDK labels.
 
 ## Repository layout
 
 ```text
-frontend/          Next.js deal-room interface; never owns backend or counterparty keys
-backend/           Fastify orchestration API and deterministic negotiation state machine
-packages/domain/   Shared schemas, money types, policies, and state transitions
-contracts/         Solidity escrow and deployment code (introduced as an isolated workspace)
-docs/              Architecture decisions, threat model, and demo runbook
+frontend/          Next.js football deal room and live demo controls
+backend/           Fastify API, WDK policies, encrypted wallet vault, event log
+packages/domain/   Shared validation and deterministic deal state machine
+packages/protocol/ Canonical EIP-712 authorization and milestone hashing
+contracts/         DeadlineEscrow, MockUSDT, and adversarial contract tests
+docs/              Architecture, trust boundaries, and demo runbook
 ```
 
-The boundaries are deliberate:
-
-- **Domain** decides whether an offer or transition is valid.
-- **Agent policy** decides whether an agent is allowed to propose/sign it.
-- **WDK** creates accounts, signs typed data, and prepares wallet execution.
-- **The smart contract** enforces custody and milestone payouts on-chain.
-- **The frontend** renders signed facts; it is never the source of financial truth.
-
-## Local development
-
-Requirements: Node.js 22.17 or later and npm 10.9 or later.
-
-```bash
-cp .env.example .env
-npm install
-npm run dev:backend
-npm run dev:frontend
-```
-
-Run all quality gates:
+## Quality gates
 
 ```bash
 npm run check
-npm run build
 ```
 
-## Implemented WDK proof
+The suite covers the domain state machine, policy verdicts, recovered WDK
+signatures, encrypted vault behavior, append-only events, protocol hashes, and
+escrow permissions/invariants.
 
-The backend uses the official `@tetherto/wdk` policy engine and
-`@tetherto/wdk-wallet-evm` account module. It does not merely run a parallel
-application-level budget check:
+## Safety boundary
 
-- `POST /api/v1/policies/evaluate-offer` dry-runs `signTypedData` through the
-  WDK `simulate` policy mirror.
-- `POST /api/v1/policies/sign-offer` signs only when that same WDK policy
-  returns `ALLOW`.
-- Hard maximums, human-approval thresholds, counterparty allowlists, policy
-  expiry, chain ID, and escrow address are independently enforced rules.
-- The response includes the EIP-712 digest, WDK agent address, matching rule,
-  policy trace, and (only when allowed) the signature.
+This is a local-chain hackathon prototype, not a FIFA transfer registry, legal
+contract service, custody provider, or production payment system. The checked-in
+Hardhat deployer key is public test material and must never receive real assets.
 
-The integration tests recover the signer from the EIP-712 signature and assert
-that it is the WDK account that passed the policy.
-
-## Implemented escrow proof
-
-`contracts/contracts/DeadlineEscrow.sol` verifies buyer, seller, and player
-signatures over one canonical authorization before pulling test USD₮ from the
-buyer. It releases the signing bonus immediately, restricts milestone release to
-the named verifier, prevents double release, and returns any remainder after the
-settlement window. The contract accepts EOA and ERC-1271 smart-account
-signatures, so an ERC-4337 WDK account is not reduced to an EOA-only demo.
-
-## Safety posture
-
-This is a testnet prototype for grassroots and academy loan/bonus agreements, not a FIFA transfer registry or legal-contract service. No production keys, mnemonics, or funded credentials belong in this repository.
-
-See [docs/architecture.md](docs/architecture.md) for the system design and invariants.
+See [the architecture](docs/architecture.md) and [demo runbook](docs/demo-scope.md).

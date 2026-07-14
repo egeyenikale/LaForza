@@ -23,14 +23,14 @@
   "engines": {
     "node": ">=22.17"
   },
+  "overrides": {
+    "@tetherto/wdk-wallet": "1.0.0-beta.13"
+  },
   "devDependencies": {
     "@tetherto/wdk-wallet": "1.0.0-beta.13",
     "concurrently": "^10.0.3",
     "prettier": "^3.6.2",
     "typescript": "^5.9.3",
     "wait-on": "^9.0.10"
-  },
-  "overrides": {
-    "@tetherto/wdk-wallet": "1.0.0-beta.13"
   }
 }
