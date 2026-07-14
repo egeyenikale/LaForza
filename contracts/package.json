@@ -1,0 +1,25 @@
+{
+  "name": "@laforza/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "HOME=$PWD/.hardhat-home hardhat compile",
+    "test": "HOME=$PWD/.hardhat-home hardhat test",
+    "typecheck": "HOME=$PWD/.hardhat-home hardhat compile && tsc --noEmit"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.4.0"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "^4.0.14",
+    "@nomicfoundation/hardhat-ethers-chai-matchers": "^3.0.11",
+    "@nomicfoundation/hardhat-mocha": "^3.0.21",
+    "@nomicfoundation/hardhat-typechain": "^3.1.1",
+    "@types/chai": "^5.2.3",
+    "@types/mocha": "^10.0.10",
+    "chai": "^6.2.2",
+    "ethers": "^6.17.0",
+    "hardhat": "^3.9.1"
+  }
+}

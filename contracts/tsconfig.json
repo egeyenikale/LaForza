@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node", "mocha"]
+  },
+  "include": [
+    "hardhat.config.ts",
+    "test/**/*.ts",
+    "ignition/**/*.ts",
+    "types/**/*.ts"
+  ]
+}

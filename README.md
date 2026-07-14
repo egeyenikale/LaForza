@@ -58,6 +58,15 @@ application-level budget check:
 The integration tests recover the signer from the EIP-712 signature and assert
 that it is the WDK account that passed the policy.
 
+## Implemented escrow proof
+
+`contracts/contracts/DeadlineEscrow.sol` verifies buyer, seller, and player
+signatures over one canonical authorization before pulling test USD₮ from the
+buyer. It releases the signing bonus immediately, restricts milestone release to
+the named verifier, prevents double release, and returns any remainder after the
+settlement window. The contract accepts EOA and ERC-1271 smart-account
+signatures, so an ERC-4337 WDK account is not reduced to an EOA-only demo.
+
 ## Safety posture
 
 This is a testnet prototype for grassroots and academy loan/bonus agreements, not a FIFA transfer registry or legal-contract service. No production keys, mnemonics, or funded credentials belong in this repository.
