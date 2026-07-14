@@ -22,7 +22,11 @@
     "node": ">=22.17"
   },
   "devDependencies": {
+    "@tetherto/wdk-wallet": "1.0.0-beta.13",
     "prettier": "^3.6.2",
     "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "@tetherto/wdk-wallet": "1.0.0-beta.13"
   }
 }

@@ -40,6 +40,24 @@ npm run check
 npm run build
 ```
 
+## Implemented WDK proof
+
+The backend uses the official `@tetherto/wdk` policy engine and
+`@tetherto/wdk-wallet-evm` account module. It does not merely run a parallel
+application-level budget check:
+
+- `POST /api/v1/policies/evaluate-offer` dry-runs `signTypedData` through the
+  WDK `simulate` policy mirror.
+- `POST /api/v1/policies/sign-offer` signs only when that same WDK policy
+  returns `ALLOW`.
+- Hard maximums, human-approval thresholds, counterparty allowlists, policy
+  expiry, chain ID, and escrow address are independently enforced rules.
+- The response includes the EIP-712 digest, WDK agent address, matching rule,
+  policy trace, and (only when allowed) the signature.
+
+The integration tests recover the signer from the EIP-712 signature and assert
+that it is the WDK account that passed the policy.
+
 ## Safety posture
 
 This is a testnet prototype for grassroots and academy loan/bonus agreements, not a FIFA transfer registry or legal-contract service. No production keys, mnemonics, or funded credentials belong in this repository.

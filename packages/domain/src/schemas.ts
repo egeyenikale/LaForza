@@ -64,6 +64,13 @@ export const offerSchema = z.object({
   createdAt: z.string().datetime(),
 });
 
+export const policyEvaluationRequestSchema = z.object({
+  policy: agentPolicySchema,
+  offer: offerSchema,
+  chainId: z.number().int().positive(),
+  verifyingContract: addressSchema,
+});
+
 export const dealSchema = z.object({
   id: z.string().uuid(),
   title: z.string().min(3).max(120),
@@ -94,3 +101,6 @@ export type Deal = z.infer<typeof dealSchema>;
 export type DealStatus = z.infer<typeof dealStatusSchema>;
 export type Offer = z.infer<typeof offerSchema>;
 export type PartyRole = z.infer<typeof partyRoleSchema>;
+export type PolicyEvaluationRequest = z.infer<
+  typeof policyEvaluationRequestSchema
+>;

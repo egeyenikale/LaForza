@@ -37,6 +37,9 @@ It does not claim to replace governing bodies, identity checks, employment law, 
 ## Trust boundaries
 
 - A local WDK policy is a pre-execution guard, not on-chain authorization.
+- Offer signing is itself policy-governed: the WDK `signTypedData` simulation
+  checks the deal amount, human approval threshold, counterparty allowlist,
+  expiry, chain ID, and verifying escrow contract before a signature exists.
 - The escrow contract independently enforces funded amounts and milestone release ceilings.
 - The backend may coordinate and relay public data but cannot fabricate participant signatures.
 - Every offer includes a nonce, expiry, chain ID, and deal ID to prevent replay across deals or networks.

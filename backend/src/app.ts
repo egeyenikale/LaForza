@@ -3,6 +3,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 
 import type { AppConfig } from "./config.js";
 import { registerDealRoutes } from "./routes/deals.js";
+import { registerPolicyRoutes } from "./routes/policies.js";
 
 export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   const app = Fastify({ logger: { level: config.LOG_LEVEL } });
@@ -19,6 +20,7 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   }));
 
   await app.register(registerDealRoutes, { prefix: "/api/v1" });
+  await app.register(registerPolicyRoutes, { prefix: "/api/v1" });
 
   return app;
 }
