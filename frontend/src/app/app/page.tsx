@@ -6,6 +6,7 @@ import {
   Contract,
   ContractFactory,
   formatEther,
+  getCreateAddress,
   id,
   keccak256,
   parseEther,
@@ -115,8 +116,16 @@ type DemoState = {
 };
 
 type DeploymentArtifacts = {
-  token: { abi: InterfaceAbi; bytecode: string };
-  escrow: { abi: InterfaceAbi; bytecode: string };
+  token: {
+    abi: InterfaceAbi;
+    bytecode: string;
+    deployedBytecode: string;
+  };
+  escrow: {
+    abi: InterfaceAbi;
+    bytecode: string;
+    deployedBytecode: string;
+  };
 };
 
 type PreparedParticipants = {
@@ -217,9 +226,236 @@ const readableWalletError = (error: unknown, fallback: string) => {
     nested?.message ??
     fallback;
   if (message.includes("reading 'length'")) {
-    return "The injected wallet failed to build the contract deployment. Update and unlock MetaMask, disable other wallet extensions for this site, reload, and retry.";
+    return "MetaMask returned an ambiguous deployment response. The transaction may still have been mined; wait a few seconds and retry so La Forza can recover it from Base Sepolia.";
   }
   return message;
+};
+
+const BASE_SEPOLIA_BLOCKSCOUT_API =
+  "https://base-sepolia.blockscout.com/api/v2";
+
+type ExplorerCreation = {
+  hash: string;
+  nonce: number;
+  result: string;
+  created_contract?: { hash: string } | null;
+  from?: { hash: string } | null;
+};
+
+type RecoveredDeployment = {
+  address: string;
+  transactionHash: string;
+};
+
+const wait = (milliseconds: number) =>
+  new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+
+const walletErrorMessage = (error: unknown) => {
+  const nested = error as {
+    message?: string;
+    error?: { message?: string };
+    info?: { error?: { message?: string } };
+  };
+  return (
+    nested?.info?.error?.message ??
+    nested?.error?.message ??
+    nested?.message ??
+    ""
+  );
+};
+
+const isAmbiguousDeploymentError = (error: unknown) =>
+  walletErrorMessage(error).includes("reading 'length'");
+
+const explorerCreations = async (
+  owner: string,
+): Promise<ExplorerCreation[]> => {
+  try {
+    const response = await fetch(
+      `${BASE_SEPOLIA_BLOCKSCOUT_API}/addresses/${owner}/transactions`,
+      { cache: "no-store" },
+    );
+    if (!response.ok) return [];
+    const body = (await response.json()) as { items?: ExplorerCreation[] };
+    return (body.items ?? []).filter(
+      (transaction) =>
+        transaction.result === "success" &&
+        Boolean(transaction.created_contract?.hash),
+    );
+  } catch {
+    return [];
+  }
+};
+
+const validateCreation = async (
+  provider: BrowserProvider,
+  owner: string,
+  creation: ExplorerCreation,
+): Promise<RecoveredDeployment | undefined> => {
+  const contractAddress = creation.created_contract?.hash;
+  if (!contractAddress) return undefined;
+  const receipt = await provider.getTransactionReceipt(creation.hash);
+  if (
+    !receipt ||
+    receipt.status !== 1 ||
+    !receipt.contractAddress ||
+    receipt.from.toLowerCase() !== owner.toLowerCase() ||
+    receipt.contractAddress.toLowerCase() !== contractAddress.toLowerCase()
+  ) {
+    return undefined;
+  }
+  return { address: receipt.contractAddress, transactionHash: receipt.hash };
+};
+
+const findExistingTestToken = async (
+  provider: BrowserProvider,
+  owner: string,
+  artifact: DeploymentArtifacts["token"],
+): Promise<RecoveredDeployment | undefined> => {
+  const expectedRuntimeHash = keccak256(artifact.deployedBytecode);
+  for (const creation of await explorerCreations(owner)) {
+    const candidate = creation.created_contract?.hash;
+    if (!candidate) continue;
+    const runtimeCode = await provider.getCode(candidate);
+    if (
+      runtimeCode === "0x" ||
+      keccak256(runtimeCode) !== expectedRuntimeHash
+    ) {
+      continue;
+    }
+    const validated = await validateCreation(provider, owner, creation);
+    if (validated) return validated;
+  }
+  return undefined;
+};
+
+const findExistingEscrow = async (
+  provider: BrowserProvider,
+  owner: string,
+  artifact: DeploymentArtifacts["escrow"],
+  expected: {
+    token: string;
+    buyer: string;
+    seller: string;
+    player: string;
+    verifier: string;
+    totalAmount: bigint;
+    signingBonus: bigint;
+    milestoneRoot: string;
+    now: number;
+  },
+): Promise<RecoveredDeployment | undefined> => {
+  for (const creation of await explorerCreations(owner)) {
+    const candidate = creation.created_contract?.hash;
+    if (
+      !candidate ||
+      candidate.toLowerCase() === expected.token.toLowerCase()
+    ) {
+      continue;
+    }
+    try {
+      const escrow = new Contract(candidate, artifact.abi, provider);
+      const [
+        token,
+        buyer,
+        seller,
+        player,
+        verifier,
+        totalAmount,
+        signingBonus,
+        milestoneRoot,
+        fundingDeadline,
+        funded,
+      ] = await Promise.all([
+        escrow.getFunction("token")(),
+        escrow.getFunction("buyer")(),
+        escrow.getFunction("seller")(),
+        escrow.getFunction("player")(),
+        escrow.getFunction("verifier")(),
+        escrow.getFunction("totalAmount")(),
+        escrow.getFunction("signingBonus")(),
+        escrow.getFunction("milestoneRoot")(),
+        escrow.getFunction("fundingDeadline")(),
+        escrow.getFunction("funded")(),
+      ]);
+      const matches =
+        String(token).toLowerCase() === expected.token.toLowerCase() &&
+        String(buyer).toLowerCase() === expected.buyer.toLowerCase() &&
+        String(seller).toLowerCase() === expected.seller.toLowerCase() &&
+        String(player).toLowerCase() === expected.player.toLowerCase() &&
+        String(verifier).toLowerCase() === expected.verifier.toLowerCase() &&
+        BigInt(totalAmount) === expected.totalAmount &&
+        BigInt(signingBonus) === expected.signingBonus &&
+        String(milestoneRoot) === expected.milestoneRoot &&
+        BigInt(fundingDeadline) > BigInt(expected.now) &&
+        funded === false;
+      if (!matches) continue;
+      const validated = await validateCreation(provider, owner, creation);
+      if (validated) return validated;
+    } catch {
+      // Other contracts created by this wallet are not La Forza escrows.
+    }
+  }
+  return undefined;
+};
+
+const recoverExpectedCreation = async (
+  provider: BrowserProvider,
+  owner: string,
+  expectedAddress: string,
+): Promise<RecoveredDeployment | undefined> => {
+  for (let attempt = 0; attempt < 45; attempt += 1) {
+    if ((await provider.getCode(expectedAddress)) !== "0x") {
+      for (
+        let explorerAttempt = 0;
+        explorerAttempt < 12;
+        explorerAttempt += 1
+      ) {
+        const creation = (await explorerCreations(owner)).find(
+          (transaction) =>
+            transaction.created_contract?.hash.toLowerCase() ===
+            expectedAddress.toLowerCase(),
+        );
+        if (creation) {
+          const validated = await validateCreation(provider, owner, creation);
+          if (validated) return validated;
+        }
+        await wait(1_000);
+      }
+      return undefined;
+    }
+    await wait(1_000);
+  }
+  return undefined;
+};
+
+const deployRecoverably = async (
+  provider: BrowserProvider,
+  owner: string,
+  factory: ContractFactory,
+  args: readonly unknown[],
+): Promise<RecoveredDeployment> => {
+  const nonce = await provider.getTransactionCount(owner, "pending");
+  const expectedAddress = getCreateAddress({ from: owner, nonce });
+  try {
+    const contract = await factory.deploy(...args);
+    const transaction = contract.deploymentTransaction();
+    if (!transaction) throw new Error("Contract deployment was not sent");
+    await contract.waitForDeployment();
+    return {
+      address: await contract.getAddress(),
+      transactionHash: transaction.hash,
+    };
+  } catch (error) {
+    if (!isAmbiguousDeploymentError(error)) throw error;
+    const recovered = await recoverExpectedCreation(
+      provider,
+      owner,
+      expectedAddress,
+    );
+    if (recovered) return recovered;
+    throw error;
+  }
 };
 
 const LOCAL_CHAIN = {
@@ -593,11 +829,11 @@ export default function HomePage() {
         artifacts.token.bytecode,
         signer,
       );
-      const token = await tokenFactory.deploy();
-      const tokenDeployment = token.deploymentTransaction();
-      if (!tokenDeployment) throw new Error("Token deployment was not sent");
-      await token.waitForDeployment();
-      const tokenAddress = await token.getAddress();
+      const tokenDeployment =
+        (await findExistingTestToken(provider, address, artifacts.token)) ??
+        (await deployRecoverably(provider, address, tokenFactory, []));
+      const tokenAddress = tokenDeployment.address;
+      const token = new Contract(tokenAddress, artifacts.token.abi, signer);
 
       const latestBlock = await provider.getBlock("latest");
       if (!latestBlock) throw new Error("Could not read the testnet clock");
@@ -625,7 +861,7 @@ export default function HomePage() {
         artifacts.escrow.bytecode,
         signer,
       );
-      const escrow = await escrowFactory.deploy(
+      const escrowArguments = [
         tokenAddress,
         address,
         prepared.participants.seller,
@@ -637,11 +873,26 @@ export default function HomePage() {
         fundingDeadline,
         settlementDeadline,
         [milestone],
-      );
-      const escrowDeployment = escrow.deploymentTransaction();
-      if (!escrowDeployment) throw new Error("Escrow deployment was not sent");
-      await escrow.waitForDeployment();
-      const escrowAddress = await escrow.getAddress();
+      ] as const;
+      const escrowDeployment =
+        (await findExistingEscrow(provider, address, artifacts.escrow, {
+          token: tokenAddress,
+          buyer: address,
+          seller: prepared.participants.seller,
+          player: prepared.participants.player,
+          verifier: prepared.participants.verifier,
+          totalAmount: BigInt(prepared.terms.totalAmountMicroUsdt),
+          signingBonus: BigInt(prepared.terms.signingBonusMicroUsdt),
+          milestoneRoot,
+          now: latestBlock.timestamp,
+        })) ??
+        (await deployRecoverably(
+          provider,
+          address,
+          escrowFactory,
+          escrowArguments,
+        ));
+      const escrowAddress = escrowDeployment.address;
 
       const verifierFunding = await signer.sendTransaction({
         to: prepared.participants.verifier,
@@ -663,8 +914,8 @@ export default function HomePage() {
           buyerAddress: address,
           tokenAddress,
           escrowAddress,
-          tokenDeployTxHash: tokenDeployment.hash,
-          escrowDeployTxHash: escrowDeployment.hash,
+          tokenDeployTxHash: tokenDeployment.transactionHash,
+          escrowDeployTxHash: escrowDeployment.transactionHash,
           verifierFundingTxHash: verifierFunding.hash,
           mintTxHash: mint.hash,
         }),
