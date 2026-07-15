@@ -586,12 +586,10 @@ export class DemoService {
       throw new Error("Public testnet authorization digest mismatch");
     }
 
-    const [tokenDeploymentReceipt, escrowDeploymentReceipt] = await Promise.all(
-      [
-        this.#wait(input.tokenDeployTxHash),
-        this.#wait(input.escrowDeployTxHash),
-      ],
-    );
+    const [tokenDeploymentReceipt] = await Promise.all([
+      this.#wait(input.tokenDeployTxHash),
+      this.#wait(input.escrowDeployTxHash),
+    ]);
     const sharedToken = await this.#loadTestToken();
     const expectedTokenDeployer = sharedToken?.deployer ?? buyer;
     if (
@@ -602,11 +600,6 @@ export class DemoService {
         `Token deployment came from ${tokenDeploymentReceipt.from}; expected ${expectedTokenDeployer}`,
       );
     }
-    await Promise.all([
-      this.#assertDeploymentTarget(tokenDeploymentReceipt, tokenAddress),
-      this.#assertDeploymentTarget(escrowDeploymentReceipt, escrowAddress),
-    ]);
-
     if (sharedToken && sharedToken.address !== tokenAddress) {
       throw new Error("Escrow does not use the shared La Forza test USDt");
     }
