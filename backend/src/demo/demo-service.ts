@@ -602,11 +602,6 @@ export class DemoService {
         `Token deployment came from ${tokenDeploymentReceipt.from}; expected ${expectedTokenDeployer}`,
       );
     }
-    if (escrowDeploymentReceipt.from.toLowerCase() !== buyer.toLowerCase()) {
-      throw new Error(
-        `Escrow deployment came from ${escrowDeploymentReceipt.from}; expected buyer ${buyer}`,
-      );
-    }
     await Promise.all([
       this.#assertDeploymentTarget(tokenDeploymentReceipt, tokenAddress),
       this.#assertDeploymentTarget(escrowDeploymentReceipt, escrowAddress),
