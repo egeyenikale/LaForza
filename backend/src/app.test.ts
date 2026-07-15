@@ -15,6 +15,7 @@ const config = {
   CHAIN_RPC_URL: "http://127.0.0.1:8545",
   CHAIN_ID: 31337,
   DATA_DIR: "/tmp/laforza-test",
+  STORAGE_PREFIX: "laforza:test",
   CONTRACT_ARTIFACTS_DIR: "/tmp/laforza-artifacts",
   WDK_VAULT_PASSPHRASE: "laforza-test-vault",
   LOCAL_DEPLOYER_PRIVATE_KEY:

@@ -3,17 +3,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { FileStorageBackend } from "../storage/storage-backend.js";
 import { LocalWalletVault } from "./local-wallet-vault.js";
 
 describe("LocalWalletVault", () => {
   it("persists only encrypted WDK seeds and unlocks them with the passkey", async () => {
     const directory = await mkdtemp(join(tmpdir(), "laforza-vault-"));
-    const path = join(directory, "wallets.json");
-    const vault = new LocalWalletVault(path);
+    const vault = new LocalWalletVault(new FileStorageBackend(directory));
     const passkey = "tournament-demo-passkey";
 
     const created = await vault.create(passkey);
-    const persisted = await readFile(path, "utf8");
+    const persisted = await readFile(
+      join(directory, "wallet-vault.json"),
+      "utf8",
+    );
     const listed = await vault.list(passkey);
 
     expect(created).toHaveLength(4);

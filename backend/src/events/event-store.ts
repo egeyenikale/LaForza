@@ -1,6 +1,6 @@
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
+
+import type { StorageBackend } from "../storage/storage-backend.js";
 
 export type DemoEvent = {
   id: string;
@@ -10,7 +10,10 @@ export type DemoEvent = {
 };
 
 export class EventStore {
-  constructor(private readonly filePath: string) {}
+  constructor(
+    private readonly storage: StorageBackend,
+    private readonly key = "events",
+  ) {}
 
   async append(
     type: string,
@@ -22,29 +25,20 @@ export class EventStore {
       at: new Date().toISOString(),
       detail,
     };
-    await mkdir(dirname(this.filePath), { recursive: true });
-    await appendFile(this.filePath, `${JSON.stringify(event)}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
+    await this.storage.withLock(this.key, async () => {
+      const events = await this.list();
+      events.push(event);
+      await this.storage.write(this.key, JSON.stringify(events));
     });
     return event;
   }
 
   async list(): Promise<DemoEvent[]> {
-    try {
-      const content = await readFile(this.filePath, "utf8");
-      return content
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as DemoEvent);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-      throw error;
-    }
+    const content = await this.storage.read(this.key);
+    return content ? (JSON.parse(content) as DemoEvent[]) : [];
   }
 
   async clear(): Promise<void> {
-    await mkdir(dirname(this.filePath), { recursive: true });
-    await writeFile(this.filePath, "", { encoding: "utf8", mode: 0o600 });
+    await this.storage.write(this.key, "[]");
   }
 }

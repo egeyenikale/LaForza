@@ -6,9 +6,9 @@ import {
   randomBytes,
   scrypt as scryptCallback,
 } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import { promisify } from "node:util";
+
+import type { StorageBackend } from "../storage/storage-backend.js";
 
 const scrypt = promisify(scryptCallback);
 
@@ -54,65 +54,59 @@ async function addressFromSeed(seedPhrase: string): Promise<string> {
 }
 
 export class LocalWalletVault {
-  constructor(private readonly filePath: string) {}
+  constructor(
+    private readonly storage: StorageBackend,
+    private readonly key = "wallet-vault",
+  ) {}
 
   async exists(): Promise<boolean> {
-    try {
-      await readFile(this.filePath, "utf8");
-      return true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-      throw error;
-    }
+    return (await this.storage.read(this.key)) !== null;
   }
 
   async create(passkey: string): Promise<PublicWallet[]> {
     assertPasskey(passkey);
-    await mkdir(dirname(this.filePath), { recursive: true });
+    return this.storage.withLock(this.key, async () => {
+      if (await this.exists()) return this.list(passkey);
 
-    const wallets: EncryptedWallet[] = [];
-    for (const role of walletRoles) {
-      const seedPhrase = WDK.getRandomSeedPhrase(24);
-      const plaintext = Buffer.from(seedPhrase, "utf8");
-      const salt = randomBytes(16);
-      const iv = randomBytes(12);
-      const key = await deriveKey(passkey, salt);
+      const wallets: EncryptedWallet[] = [];
+      for (const role of walletRoles) {
+        const seedPhrase = WDK.getRandomSeedPhrase(24);
+        const plaintext = Buffer.from(seedPhrase, "utf8");
+        const salt = randomBytes(16);
+        const iv = randomBytes(12);
+        const key = await deriveKey(passkey, salt);
 
-      try {
-        const cipher = createCipheriv("aes-256-gcm", key, iv);
-        const encryptedSeed = Buffer.concat([
-          cipher.update(plaintext),
-          cipher.final(),
-        ]);
-        wallets.push({
-          role,
-          address: await addressFromSeed(seedPhrase),
-          saltBase64: salt.toString("base64"),
-          ivBase64: iv.toString("base64"),
-          authTagBase64: cipher.getAuthTag().toString("base64"),
-          encryptedSeedBase64: encryptedSeed.toString("base64"),
-        });
-        encryptedSeed.fill(0);
-      } finally {
-        plaintext.fill(0);
-        key.fill(0);
+        try {
+          const cipher = createCipheriv("aes-256-gcm", key, iv);
+          const encryptedSeed = Buffer.concat([
+            cipher.update(plaintext),
+            cipher.final(),
+          ]);
+          wallets.push({
+            role,
+            address: await addressFromSeed(seedPhrase),
+            saltBase64: salt.toString("base64"),
+            ivBase64: iv.toString("base64"),
+            authTagBase64: cipher.getAuthTag().toString("base64"),
+            encryptedSeedBase64: encryptedSeed.toString("base64"),
+          });
+          encryptedSeed.fill(0);
+        } finally {
+          plaintext.fill(0);
+          key.fill(0);
+        }
       }
-    }
 
-    const vault: VaultFile = {
-      version: 1,
-      createdAt: new Date().toISOString(),
-      encryption: "scrypt-aes-256-gcm",
-      wallets,
-    };
-    const temporaryPath = `${this.filePath}.tmp`;
-    await writeFile(temporaryPath, JSON.stringify(vault, null, 2), {
-      encoding: "utf8",
-      mode: 0o600,
+      const vault: VaultFile = {
+        version: 1,
+        createdAt: new Date().toISOString(),
+        encryption: "scrypt-aes-256-gcm",
+        wallets,
+      };
+      await this.storage.write(this.key, JSON.stringify(vault));
+
+      return wallets.map(({ role, address }) => ({ role, address }));
     });
-    await rename(temporaryPath, this.filePath);
-
-    return wallets.map(({ role, address }) => ({ role, address }));
   }
 
   async list(passkey: string): Promise<PublicWallet[]> {
@@ -172,7 +166,8 @@ export class LocalWalletVault {
   }
 
   private async readVault(): Promise<VaultFile> {
-    const content = await readFile(this.filePath, "utf8");
+    const content = await this.storage.read(this.key);
+    if (!content) throw new Error("Wallet vault does not exist");
     const parsed = JSON.parse(content) as VaultFile;
     if (
       parsed.version !== 1 ||

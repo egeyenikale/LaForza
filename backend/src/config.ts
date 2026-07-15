@@ -11,9 +11,20 @@ const configSchema = z.object({
   CHAIN_RPC_URL: z.string().url().default("http://127.0.0.1:8545"),
   CHAIN_ID: z.coerce.number().int().positive().default(31337),
   DATA_DIR: z.string().default(resolve(process.cwd(), "../.data")),
+  STORAGE_PREFIX: z
+    .string()
+    .regex(/^[a-zA-Z0-9:_-]+$/)
+    .default("laforza:production"),
+  UPSTASH_REDIS_REST_URL: z.string().url().optional(),
+  UPSTASH_REDIS_REST_TOKEN: z.string().min(20).optional(),
   CONTRACT_ARTIFACTS_DIR: z
     .string()
-    .default(resolve(process.cwd(), "../contracts/artifacts")),
+    .default(
+      resolve(
+        process.cwd(),
+        process.env.VERCEL ? "contract-artifacts" : "../contracts/artifacts",
+      ),
+    ),
   WDK_VAULT_PASSPHRASE: z.string().min(12).default("laforza-local-demo"),
   LOCAL_DEPLOYER_PRIVATE_KEY: z
     .string()
@@ -26,5 +37,28 @@ const configSchema = z.object({
 export type AppConfig = z.infer<typeof configSchema>;
 
 export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
-  return configSchema.parse(source);
+  const config = configSchema.parse(source);
+  const hasRedisUrl = Boolean(config.UPSTASH_REDIS_REST_URL);
+  const hasRedisToken = Boolean(config.UPSTASH_REDIS_REST_TOKEN);
+  if (hasRedisUrl !== hasRedisToken) {
+    throw new Error(
+      "UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN must be configured together",
+    );
+  }
+  if (source.VERCEL && !hasRedisUrl) {
+    throw new Error(
+      "Vercel backend requires Upstash Redis so wallet vaults, offers, events, and active deals survive cold starts",
+    );
+  }
+  if (source.VERCEL && !source.WDK_VAULT_PASSPHRASE) {
+    throw new Error(
+      "Vercel backend requires a unique WDK_VAULT_PASSPHRASE secret; the local demo default is not allowed",
+    );
+  }
+  if (source.VERCEL && config.CHAIN_ID !== 84532) {
+    throw new Error(
+      "The hosted La Forza demo is intentionally restricted to Base Sepolia (CHAIN_ID=84532)",
+    );
+  }
+  return config;
 }

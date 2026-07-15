@@ -14,6 +14,7 @@ coverage/
 
 # Local chain and deployment outputs
 artifacts/
+backend/contract-artifacts/
 cache/
 contracts/types/
 contracts/.hardhat-home/

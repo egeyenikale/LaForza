@@ -19,8 +19,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:4000/api/v1";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/backend/api/v1";
 
 type Tab = "overview" | "players" | "offers" | "deal" | "ledger" | "about";
 

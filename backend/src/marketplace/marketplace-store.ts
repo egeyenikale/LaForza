@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+
+import type { StorageBackend } from "../storage/storage-backend.js";
 
 export type CounterpartyRole = "CLUB" | "AGENT" | "SCOUT" | "TESTER";
 
@@ -41,21 +41,16 @@ const emptyMarketplace = (): MarketplaceData => ({
 });
 
 export class MarketplaceStore {
-  #mutation = Promise.resolve();
-
-  constructor(private readonly filePath: string) {}
+  constructor(
+    private readonly storage: StorageBackend,
+    private readonly key = "marketplace",
+  ) {}
 
   async read(): Promise<MarketplaceData> {
-    try {
-      return JSON.parse(
-        await readFile(this.filePath, "utf8"),
-      ) as MarketplaceData;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return emptyMarketplace();
-      }
-      throw error;
-    }
+    const content = await this.storage.read(this.key);
+    return content
+      ? (JSON.parse(content) as MarketplaceData)
+      : emptyMarketplace();
   }
 
   async register(
@@ -108,20 +103,11 @@ export class MarketplaceStore {
   async #mutate<T>(
     mutation: (data: MarketplaceData) => Promise<T> | T,
   ): Promise<T> {
-    let result!: T;
-    const operation = this.#mutation.then(async () => {
+    return this.storage.withLock(this.key, async () => {
       const data = await this.read();
-      result = await mutation(data);
-      await mkdir(dirname(this.filePath), { recursive: true });
-      const temporaryPath = `${this.filePath}.${randomUUID()}.tmp`;
-      await writeFile(temporaryPath, JSON.stringify(data, null, 2), {
-        encoding: "utf8",
-        mode: 0o600,
-      });
-      await rename(temporaryPath, this.filePath);
+      const result = await mutation(data);
+      await this.storage.write(this.key, JSON.stringify(data));
+      return result;
     });
-    this.#mutation = operation.catch(() => undefined);
-    await operation;
-    return result;
   }
 }

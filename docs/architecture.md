@@ -52,8 +52,9 @@ La Forza proves one narrow flow end to end:
   zero evidence are rejected.
 - Money uses integer micro-USD₮ units. Floating-point values never cross a
   financial boundary.
-- Demo events are append-only JSONL. On-chain balances remain the settlement
-  source of truth.
+- Demo events remain an ordered append-only timeline. Local development stores
+  state atomically on disk; the Vercel deployment stores it in Redis. On-chain
+  balances remain the settlement source of truth.
 
 ## Signed offer exchange
 
@@ -63,8 +64,7 @@ The pre-deal marketplace is deliberately separate from escrow execution:
 2. The browser asks that exact MetaMask account to sign a canonical registration
    payload containing a one-time request ID and timestamp.
 3. The backend recovers the signer, rejects mismatched or expired signatures,
-   and persists the verified profile in `marketplace.json` with an atomic
-   replace.
+   and persists the verified profile through the shared durable store.
 4. Every offer signs the exact counterparty, player, amount, signing bonus,
    conditions, request ID, and timestamp. Replayed request IDs are rejected.
 5. Marketplace offers remain non-custodial proposals. Moving money still
@@ -95,3 +95,12 @@ skipped when their on-chain balances are already sufficient. Contract creation
 receipts must originate from the buyer, while funding and mint operations are
 validated by their own targets and resulting balances so EIP-7702 wallet
 execution is not misclassified as contract deployment.
+
+### Hosted persistence
+
+Vercel functions are stateless, so the hosted backend does not write product
+state to its filesystem or rely on one warm process. A shared storage interface
+uses atomic files locally and Upstash Redis on Vercel. The encrypted WDK vault,
+marketplace, event timeline, API-created deal records, and bigint-safe active
+deal snapshot all use that interface. A distributed Redis lock serializes
+signed marketplace mutations and replay checks across function instances.

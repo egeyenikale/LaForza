@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "build": "next build",
+    "vercel-build": "npm --prefix ../packages/domain run build && next build",
     "dev": "next dev",
     "start": "next start",
     "typecheck": "tsc --noEmit"

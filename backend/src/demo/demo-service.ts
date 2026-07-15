@@ -34,6 +34,8 @@ import {
   MarketplaceStore,
   type CounterpartyRole,
 } from "../marketplace/marketplace-store.js";
+import { createStorage } from "../storage/create-storage.js";
+import type { StorageBackend } from "../storage/storage-backend.js";
 import { demoPlayers, playerById, type DemoPlayer } from "./player-catalog.js";
 import {
   LocalWalletVault,
@@ -145,6 +147,26 @@ function jsonBigInt(value: bigint): string {
   return value.toString();
 }
 
+function serializeRuntime(runtime: DemoRuntime): string {
+  return JSON.stringify(runtime, (_key, value) =>
+    typeof value === "bigint" ? { $bigint: value.toString() } : value,
+  );
+}
+
+function parseRuntime(content: string): DemoRuntime {
+  return JSON.parse(content, (_key, value) => {
+    if (
+      value &&
+      typeof value === "object" &&
+      Object.keys(value as object).length === 1 &&
+      "$bigint" in (value as Record<string, unknown>)
+    ) {
+      return BigInt(String((value as { $bigint: unknown }).$bigint));
+    }
+    return value;
+  }) as DemoRuntime;
+}
+
 function publicRuntimeWallets(runtime: DemoRuntime): PublicWallet[] {
   return runtime.wallets.map((wallet) =>
     wallet.role === "BUYER"
@@ -193,15 +215,18 @@ export class DemoService {
   readonly #vault: LocalWalletVault;
   readonly #events: EventStore;
   readonly #marketplace: MarketplaceStore;
-  #runtime?: DemoRuntime;
+  readonly #storage: StorageBackend;
+  #runtime: DemoRuntime | undefined;
 
-  constructor(private readonly config: AppConfig) {
+  constructor(
+    private readonly config: AppConfig,
+    storage?: StorageBackend,
+  ) {
     this.#provider = new JsonRpcProvider(config.CHAIN_RPC_URL, config.CHAIN_ID);
-    this.#vault = new LocalWalletVault(join(config.DATA_DIR, "wallets.json"));
-    this.#events = new EventStore(join(config.DATA_DIR, "events.jsonl"));
-    this.#marketplace = new MarketplaceStore(
-      join(config.DATA_DIR, "marketplace.json"),
-    );
+    this.#storage = storage ?? createStorage(config);
+    this.#vault = new LocalWalletVault(this.#storage);
+    this.#events = new EventStore(this.#storage);
+    this.#marketplace = new MarketplaceStore(this.#storage);
   }
 
   players(): readonly DemoPlayer[] {
@@ -210,6 +235,10 @@ export class DemoService {
 
   operatorVaultPassphrase(): string {
     return this.config.WDK_VAULT_PASSPHRASE;
+  }
+
+  storageMode(): "file" | "redis" {
+    return this.#storage.kind;
   }
 
   async registerCounterparty(
@@ -529,6 +558,7 @@ export class DemoService {
         },
       ],
     };
+    await this.#persistRuntime(this.#runtime);
     await this.#events.clear();
     await this.#events.append("PUBLIC_TESTNET_DEAL_DEPLOYED", {
       chainId: this.config.CHAIN_ID,
@@ -547,6 +577,11 @@ export class DemoService {
     playerId = "mert-kaya",
     externalBuyerAddress?: string,
   ): Promise<Record<string, unknown>> {
+    if (this.config.CHAIN_ID !== 31337) {
+      throw new Error(
+        "Server-side contract deployment is disabled on public networks; deploy with the connected MetaMask account",
+      );
+    }
     await this.#provider.getBlockNumber();
     const selectedPlayer = playerById(playerId);
     const wallets = (await this.#vault.exists())
@@ -661,6 +696,7 @@ export class DemoService {
         },
       ],
     };
+    await this.#persistRuntime(this.#runtime);
     await this.#events.clear();
     await this.#events.append("DEMO_BOOTSTRAPPED", {
       chainId: this.config.CHAIN_ID,
@@ -676,7 +712,7 @@ export class DemoService {
   }
 
   async attemptOverBudget(passkey: string): Promise<Record<string, unknown>> {
-    const runtime = this.#requireRuntime();
+    const runtime = await this.#requireRuntime();
     const envelope: DealAuthorizationEnvelope = {
       ...runtime.envelope,
       authorization: {
@@ -696,6 +732,7 @@ export class DemoService {
       createdAt: new Date().toISOString(),
       note: result.reason ?? "Club mandate rejected this proposal",
     });
+    await this.#persistRuntime(runtime);
     await this.#events.append("POLICY_DENIED_OVER_BUDGET", {
       amountMicroUsdt: "1100000000",
       decision: result.decision,
@@ -706,7 +743,7 @@ export class DemoService {
   }
 
   async reviewCounter(passkey: string): Promise<Record<string, unknown>> {
-    const runtime = this.#requireRuntime();
+    const runtime = await this.#requireRuntime();
     const result = await this.#evaluateBuyer(passkey, runtime.envelope);
     runtime.offers.push({
       id: `offer-${Date.now()}-counter`,
@@ -719,6 +756,7 @@ export class DemoService {
       createdAt: new Date().toISOString(),
       note: "Counter terms fit the mandate but cross the approval threshold",
     });
+    await this.#persistRuntime(runtime);
     await this.#events.append("HUMAN_APPROVAL_REQUIRED", {
       amountMicroUsdt: jsonBigInt(TOTAL_AMOUNT),
       decision: result.decision,
@@ -729,7 +767,7 @@ export class DemoService {
   }
 
   async approveAndSignBuyer(passkey: string): Promise<Record<string, unknown>> {
-    const runtime = this.#requireRuntime();
+    const runtime = await this.#requireRuntime();
     if (runtime.custodyMode === "METAMASK") {
       throw new Error("Connected MetaMask must sign the buyer authorization");
     }
@@ -745,6 +783,7 @@ export class DemoService {
       throw new Error("Buyer authorization was not signed");
     runtime.signatures.BUYER = result.signature;
     this.#updateAcceptedOffer(runtime, "APPROVED");
+    await this.#persistRuntime(runtime);
     await this.#events.append("BUYER_AUTHORIZATION_SIGNED", {
       signer: roleAddress(runtime.wallets, "BUYER"),
       authorizationDigest: digest,
@@ -756,7 +795,7 @@ export class DemoService {
   async recordMetamaskBuyerSignature(
     signature: string,
   ): Promise<Record<string, unknown>> {
-    const runtime = this.#requireRuntime();
+    const runtime = await this.#requireRuntime();
     if (runtime.custodyMode !== "METAMASK") {
       throw new Error("This deal is not controlled by MetaMask");
     }
@@ -778,6 +817,7 @@ export class DemoService {
     runtime.humanApprovedDigest = digest;
     runtime.signatures.BUYER = signature;
     this.#updateAcceptedOffer(runtime, "APPROVED");
+    await this.#persistRuntime(runtime);
     await this.#events.append("BUYER_AUTHORIZATION_SIGNED", {
       signer: runtime.buyerAddress,
       authorizationDigest: digest,
@@ -791,7 +831,7 @@ export class DemoService {
     role: "SELLER" | "PLAYER",
     passkey: string,
   ): Promise<Record<string, unknown>> {
-    const runtime = this.#requireRuntime();
+    const runtime = await this.#requireRuntime();
     const counterparty = runtime.buyerAddress;
     const policy = this.#partyPolicy(counterparty, runtime.envelope);
     const result = await this.#vault.withSeed(role, passkey, (seed) =>
@@ -806,6 +846,7 @@ export class DemoService {
       throw new Error(`${role} authorization was not signed`);
     runtime.signatures[role] = result.signature;
     if (role === "PLAYER") this.#updateAcceptedOffer(runtime, "FULLY_SIGNED");
+    await this.#persistRuntime(runtime);
     await this.#events.append(`${role}_AUTHORIZATION_SIGNED`, {
       signer: roleAddress(runtime.wallets, role),
       authorizationDigest: result.authorizationDigest,
@@ -815,7 +856,7 @@ export class DemoService {
   }
 
   async fund(passkey: string): Promise<Record<string, unknown>> {
-    const runtime = this.#requireRuntime();
+    const runtime = await this.#requireRuntime();
     if (runtime.custodyMode === "METAMASK") {
       throw new Error("Connected MetaMask must approve and fund this escrow");
     }
@@ -884,6 +925,7 @@ export class DemoService {
     runtime.transactions.approval = transactions.approval;
     runtime.transactions.funding = transactions.funding;
     this.#updateAcceptedOffer(runtime, "FUNDED");
+    await this.#persistRuntime(runtime);
     await this.#events.append("ESCROW_FUNDED", {
       approveTxHash: transactions.approval,
       fundingTxHash: transactions.funding,
@@ -896,7 +938,7 @@ export class DemoService {
     approvalTxHash: string,
     fundingTxHash: string,
   ): Promise<Record<string, unknown>> {
-    const runtime = this.#requireRuntime();
+    const runtime = await this.#requireRuntime();
     if (runtime.custodyMode !== "METAMASK") {
       throw new Error("This deal is not controlled by MetaMask");
     }
@@ -936,6 +978,7 @@ export class DemoService {
     runtime.transactions.approval = approvalTxHash;
     runtime.transactions.funding = fundingTxHash;
     this.#updateAcceptedOffer(runtime, "FUNDED");
+    await this.#persistRuntime(runtime);
     await this.#events.append("ESCROW_FUNDED", {
       approveTxHash: approvalTxHash,
       fundingTxHash,
@@ -947,7 +990,7 @@ export class DemoService {
   }
 
   async releaseMilestone(passkey: string): Promise<Record<string, unknown>> {
-    const runtime = this.#requireRuntime();
+    const runtime = await this.#requireRuntime();
     const escrowInterface = await this.#escrowInterface();
     const evidenceHash = keccak256(
       toUtf8Bytes("LaForza demo match report: appearance verified"),
@@ -986,6 +1029,7 @@ export class DemoService {
     );
     runtime.transactions.release = transactionHash;
     this.#updateAcceptedOffer(runtime, "SETTLED");
+    await this.#persistRuntime(runtime);
     await this.#events.append("MILESTONE_RELEASED", {
       transactionHash,
       milestoneId: runtime.milestone.id,
@@ -996,11 +1040,12 @@ export class DemoService {
   }
 
   async state(): Promise<Record<string, unknown>> {
-    const [events, marketplace] = await Promise.all([
+    const [events, marketplace, runtime] = await Promise.all([
       this.#events.list(),
       this.#marketplace.read(),
+      this.#loadRuntime(),
     ]);
-    if (!this.#runtime)
+    if (!runtime)
       return {
         initialized: false,
         network: this.#networkInfo(),
@@ -1009,7 +1054,6 @@ export class DemoService {
         marketplace,
         events,
       };
-    const runtime = this.#runtime;
     const tokenArtifact = await this.#readArtifact(
       "contracts/test/MockUSDT.sol/MockUSDT.json",
     );
@@ -1108,7 +1152,7 @@ export class DemoService {
     humanApprovedDigest?: string,
     sign = false,
   ) {
-    const runtime = this.#requireRuntime();
+    const runtime = await this.#requireRuntime();
     const counterparty = roleAddress(runtime.wallets, "SELLER");
     return this.#vault.withSeed("BUYER", passkey, (seed) =>
       new WdkDealAgent(seed).evaluateAuthorization({
@@ -1259,9 +1303,25 @@ export class DemoService {
     };
   }
 
-  #requireRuntime(): DemoRuntime {
-    if (!this.#runtime) throw new Error("Demo is not initialized");
+  async #loadRuntime(): Promise<DemoRuntime | undefined> {
+    const content = await this.#storage.read("active-runtime");
+    if (!content) {
+      this.#runtime = undefined;
+      return undefined;
+    }
+    this.#runtime = parseRuntime(content);
     return this.#runtime;
+  }
+
+  async #persistRuntime(runtime: DemoRuntime): Promise<void> {
+    this.#runtime = runtime;
+    await this.#storage.write("active-runtime", serializeRuntime(runtime));
+  }
+
+  async #requireRuntime(): Promise<DemoRuntime> {
+    const runtime = await this.#loadRuntime();
+    if (!runtime) throw new Error("Demo is not initialized");
+    return runtime;
   }
 
   #updateAcceptedOffer(

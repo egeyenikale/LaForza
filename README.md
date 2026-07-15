@@ -115,3 +115,16 @@ checked-in Hardhat deployer key is public test material and must never receive
 real assets. Base Sepolia mode creates public testnet records only.
 
 See [the architecture](docs/architecture.md) and [demo runbook](docs/demo-scope.md).
+
+## Deploy to Vercel
+
+The repository is prepared as two Vercel projects with root directories
+`backend` and `frontend`. The hosted backend requires Upstash Redis; it persists
+the encrypted WDK vault, signed offer marketplace, event history, normal API
+deals, and the active Base Sepolia runtime across serverless cold starts. The
+frontend reaches it through a same-origin `/backend/*` rewrite.
+
+Follow the complete [Vercel deployment runbook](docs/vercel-deployment.md).
+The backend intentionally refuses to boot on Vercel without Redis, a unique
+`WDK_VAULT_PASSPHRASE`, and `CHAIN_ID=84532`; this prevents an apparently live
+deployment from silently losing state or using the unsafe local demo defaults.
