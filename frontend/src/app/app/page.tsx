@@ -1564,6 +1564,7 @@ export default function HomePage() {
             onSwitch={() => void switchToDemoNetwork()}
             onFaucet={() => void mintTestUsdt()}
             onImportToken={() => void addTestUsdtToMetaMask()}
+            onOpenPlayers={() => goTo("players")}
           />
           {activeTab === "overview" && (
             <Overview state={state} completed={completed} onNavigate={goTo} />
@@ -1672,6 +1673,7 @@ function WalletDock(props: {
   onSwitch: () => void;
   onFaucet: () => void;
   onImportToken: () => void;
+  onOpenPlayers: () => void;
 }) {
   const correctNetwork = props.chainId === props.expectedChainId;
   const correctBuyer =
@@ -1736,18 +1738,22 @@ function WalletDock(props: {
           </button>
         ) : !correctNetwork ? (
           <button onClick={props.onSwitch}>Switch network</button>
+        ) : !props.tokenAddress ? (
+          <button onClick={props.onOpenPlayers}>
+            Deploy token via a deal →
+          </button>
         ) : (
           <div className="wallet-action-buttons">
             <button
               className="secondary"
               onClick={props.onFaucet}
-              disabled={!props.tokenAddress || props.busy !== null}
+              disabled={props.busy !== null}
             >
               {props.busy === "faucet" ? "Minting…" : "+ 50,000 test USD₮"}
             </button>
             <button
               onClick={props.onImportToken}
-              disabled={!props.tokenAddress || props.busy !== null}
+              disabled={props.busy !== null}
             >
               {props.busy === "token-import"
                 ? "Adding token…"
