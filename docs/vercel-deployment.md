@@ -17,11 +17,14 @@ Both Vercel projects must point to the same GitHub repository and branch.
 3. Enable the project setting that allows build files outside the root
    directory. The backend build needs `packages/`, `contracts/`, and the root
    workspace lockfile.
-4. Keep the build command from `backend/vercel.json`: `npm run vercel-build`.
-5. Add an Upstash Redis database from Vercel Marketplace and connect it to this
+4. Keep the install command from `backend/vercel.json`: `cd .. && npm ci`.
+   Both Vercel projects install from the root workspace so shared build tools
+   and packages are always present.
+5. Keep the build command from `backend/vercel.json`: `npm run vercel-build`.
+6. Add an Upstash Redis database from Vercel Marketplace and connect it to this
    backend project. Vercel should inject `UPSTASH_REDIS_REST_URL` and
    `UPSTASH_REDIS_REST_TOKEN`.
-6. Add these backend environment variables:
+7. Add these backend environment variables:
 
 ```text
 CHAIN_RPC_URL=https://sepolia.base.org
@@ -53,7 +56,10 @@ vault secret intentionally fails at startup rather than silently losing data.
 2. Set **Root Directory** to `frontend`.
 3. Enable access to files outside the root directory so the shared domain
    package can be built.
-4. Add the server-only variable:
+4. Keep the install command from `frontend/vercel.json`: `cd .. && npm ci`.
+   This installs the root npm workspace, including the TypeScript compiler used
+   to build `packages/domain`, rather than installing only the frontend folder.
+5. Add the server-only variable:
 
 ```text
 BACKEND_API_ORIGIN=https://YOUR-BACKEND.vercel.app
