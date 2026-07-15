@@ -30,4 +30,18 @@ describe("hosted configuration", () => {
       UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
     });
   });
+
+  it("accepts the Vercel KV aliases used by older Redis integrations", () => {
+    const config = loadConfig({
+      ...hostedBaseConfig,
+      KV_REST_API_URL: "https://example.upstash.io",
+      KV_REST_API_TOKEN: "a-token-with-at-least-twenty-characters",
+    });
+
+    expect(config).toMatchObject({
+      UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
+      UPSTASH_REDIS_REST_TOKEN:
+        "a-token-with-at-least-twenty-characters",
+    });
+  });
 });

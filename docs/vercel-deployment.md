@@ -23,7 +23,9 @@ Both Vercel projects must point to the same GitHub repository and branch.
 5. Keep the build command from `backend/vercel.json`: `npm run vercel-build`.
 6. Add an Upstash Redis database from Vercel Marketplace and connect it to this
    backend project. Vercel should inject `UPSTASH_REDIS_REST_URL` and
-   `UPSTASH_REDIS_REST_TOKEN`.
+   `UPSTASH_REDIS_REST_TOKEN`. Older Vercel KV integrations inject
+   `KV_REST_API_URL` and `KV_REST_API_TOKEN`; La Forza accepts those aliases as
+   well.
 7. Add these backend environment variables:
 
 ```text

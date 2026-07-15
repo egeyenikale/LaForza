@@ -17,6 +17,8 @@ const configSchema = z.object({
     .default("laforza:production"),
   UPSTASH_REDIS_REST_URL: z.string().url().optional(),
   UPSTASH_REDIS_REST_TOKEN: z.string().min(20).optional(),
+  KV_REST_API_URL: z.string().url().optional(),
+  KV_REST_API_TOKEN: z.string().min(20).optional(),
   CONTRACT_ARTIFACTS_DIR: z
     .string()
     .default(
@@ -37,7 +39,14 @@ const configSchema = z.object({
 export type AppConfig = z.infer<typeof configSchema>;
 
 export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
-  const config = configSchema.parse(source);
+  const parsed = configSchema.parse(source);
+  const config: AppConfig = {
+    ...parsed,
+    UPSTASH_REDIS_REST_URL:
+      parsed.UPSTASH_REDIS_REST_URL ?? parsed.KV_REST_API_URL,
+    UPSTASH_REDIS_REST_TOKEN:
+      parsed.UPSTASH_REDIS_REST_TOKEN ?? parsed.KV_REST_API_TOKEN,
+  };
   const hasRedisUrl = Boolean(config.UPSTASH_REDIS_REST_URL);
   const hasRedisToken = Boolean(config.UPSTASH_REDIS_REST_TOKEN);
   if (hasRedisUrl !== hasRedisToken) {
