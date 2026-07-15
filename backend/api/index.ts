@@ -1,7 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import "./_native-prebuilds.cjs";
-
 type InjectMethod =
   "DELETE" | "GET" | "HEAD" | "PATCH" | "POST" | "PUT" | "OPTIONS";
 
