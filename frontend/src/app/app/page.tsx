@@ -6,10 +6,12 @@ import {
   Contract,
   ContractFactory,
   formatEther,
+  getAddress,
   getCreateAddress,
   id,
   keccak256,
   parseEther,
+  parseUnits,
   type Eip1193Provider,
   type InterfaceAbi,
 } from "ethers";
@@ -60,6 +62,28 @@ type DemoEvent = {
   detail: Record<string, unknown>;
 };
 
+type MarketplaceCounterparty = {
+  id: string;
+  name: string;
+  role: "CLUB" | "AGENT" | "SCOUT" | "TESTER";
+  walletAddress: string;
+  createdAt: string;
+};
+
+type MarketplaceOffer = {
+  id: string;
+  playerId: string;
+  counterpartyId: string;
+  from: string;
+  fromWallet: string;
+  to: string;
+  amountMicroUsdt: string;
+  signingBonusMicroUsdt: string;
+  note: string;
+  status: "RECEIVED";
+  createdAt: string;
+};
+
 type DemoState = {
   initialized: boolean;
   custodyMode?: "WDK" | "METAMASK";
@@ -104,6 +128,10 @@ type DemoState = {
   players?: DemoPlayer[];
   selectedPlayer?: DemoPlayer;
   offers?: DemoOffer[];
+  marketplace?: {
+    counterparties: MarketplaceCounterparty[];
+    offers: MarketplaceOffer[];
+  };
   signatures?: string[];
   humanApproved?: boolean;
   transactions?: Record<string, string>;
@@ -601,6 +629,41 @@ function explorerHref(
   return `${explorerUrl}/${kind}/${value}`;
 }
 
+type CounterpartyRegistrationRequest = {
+  requestId: string;
+  name: string;
+  role: MarketplaceCounterparty["role"];
+  walletAddress: string;
+  createdAt: string;
+};
+
+type MarketplaceOfferRequest = {
+  requestId: string;
+  counterpartyId: string;
+  playerId: string;
+  walletAddress: string;
+  amountMicroUsdt: string;
+  signingBonusMicroUsdt: string;
+  note: string;
+  createdAt: string;
+};
+
+const counterpartyRegistrationMessage = (
+  input: CounterpartyRegistrationRequest,
+) =>
+  JSON.stringify({
+    domain: "laforza.marketplace",
+    action: "REGISTER_COUNTERPARTY",
+    ...input,
+  });
+
+const marketplaceOfferMessage = (input: MarketplaceOfferRequest) =>
+  JSON.stringify({
+    domain: "laforza.marketplace",
+    action: "SUBMIT_OFFER",
+    ...input,
+  });
+
 export default function HomePage() {
   const [state, setState] = useState<DemoState>({
     initialized: false,
@@ -773,6 +836,118 @@ export default function HomePage() {
       setError(
         actionError instanceof Error ? actionError.message : "Action failed",
       );
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const registerCounterparty = async (input: {
+    name: string;
+    role: MarketplaceCounterparty["role"];
+    walletAddress: string;
+  }) => {
+    const connectedAddress = walletAddress ?? (await connectWallet());
+    if (!connectedAddress) return;
+    setBusy("counterparty-register");
+    setError(null);
+    try {
+      if (getAddress(input.walletAddress) !== getAddress(connectedAddress)) {
+        throw new Error(
+          "Switch MetaMask to the wallet entered in the form before registering it.",
+        );
+      }
+      await switchToDemoNetwork();
+      const provider = new BrowserProvider(await resolveMetaMaskProvider());
+      const signer = await provider.getSigner();
+      const request: CounterpartyRegistrationRequest = {
+        requestId: crypto.randomUUID(),
+        name: input.name.trim(),
+        role: input.role,
+        walletAddress: input.walletAddress,
+        createdAt: new Date().toISOString(),
+      };
+      const signature = await signer.signMessage(
+        counterpartyRegistrationMessage(request),
+      );
+      const response = await fetch(
+        `${API_BASE}/demo/marketplace/counterparties`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ ...request, signature }),
+        },
+      );
+      const result = (await response.json()) as DemoState & { error?: string };
+      if (!response.ok) {
+        throw new Error(result.error ?? "Counterparty registration failed");
+      }
+      setState(result);
+      setBackendOnline(true);
+    } catch (registrationError) {
+      setError(
+        readableWalletError(
+          registrationError,
+          "Counterparty registration failed",
+        ),
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const submitMarketplaceOffer = async (input: {
+    counterpartyId: string;
+    playerId: string;
+    amountUsdt: string;
+    signingBonusUsdt: string;
+    note: string;
+  }) => {
+    const connectedAddress = walletAddress ?? (await connectWallet());
+    if (!connectedAddress) return;
+    setBusy("marketplace-offer");
+    setError(null);
+    try {
+      const profile = state.marketplace?.counterparties.find(
+        ({ id }) => id === input.counterpartyId,
+      );
+      if (!profile) throw new Error("Register a wallet profile first");
+      if (getAddress(profile.walletAddress) !== getAddress(connectedAddress)) {
+        throw new Error(
+          "Switch MetaMask to the wallet that owns this counterparty profile.",
+        );
+      }
+      await switchToDemoNetwork();
+      const request: MarketplaceOfferRequest = {
+        requestId: crypto.randomUUID(),
+        counterpartyId: profile.id,
+        playerId: input.playerId,
+        walletAddress: profile.walletAddress,
+        amountMicroUsdt: parseUnits(input.amountUsdt, 6).toString(),
+        signingBonusMicroUsdt: parseUnits(
+          input.signingBonusUsdt || "0",
+          6,
+        ).toString(),
+        note: input.note.trim(),
+        createdAt: new Date().toISOString(),
+      };
+      const provider = new BrowserProvider(await resolveMetaMaskProvider());
+      const signer = await provider.getSigner();
+      const signature = await signer.signMessage(
+        marketplaceOfferMessage(request),
+      );
+      const response = await fetch(`${API_BASE}/demo/marketplace/offers`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...request, signature }),
+      });
+      const result = (await response.json()) as DemoState & { error?: string };
+      if (!response.ok) {
+        throw new Error(result.error ?? "Offer submission failed");
+      }
+      setState(result);
+      setBackendOnline(true);
+    } catch (offerError) {
+      setError(readableWalletError(offerError, "Offer submission failed"));
     } finally {
       setBusy(null);
     }
@@ -1235,7 +1410,18 @@ export default function HomePage() {
           {activeTab === "offers" && (
             <OffersPanel
               offers={state.offers ?? []}
-              player={state.selectedPlayer}
+              marketplace={state.marketplace}
+              players={state.players ?? []}
+              player={selectedPlayer}
+              walletAddress={walletAddress}
+              busy={busy}
+              onConnect={() => void connectWallet()}
+              onRegister={(input) => void registerCounterparty(input)}
+              onSubmitOffer={(input) => void submitMarketplaceOffer(input)}
+              onReviewPlayer={(playerId) => {
+                setSelectedPlayerId(playerId);
+                goTo("players");
+              }}
               onNavigate={goTo}
             />
           )}
@@ -1515,6 +1701,47 @@ function Overview({
   );
 }
 
+const pitchPositions: Record<string, { x: number; y: number; zone: string }> = {
+  Goalkeeper: { x: 50, y: 89, zone: "Goal area" },
+  "Left Back": { x: 18, y: 75, zone: "Left defensive channel" },
+  "Right Back": { x: 82, y: 75, zone: "Right defensive channel" },
+  "Centre Back": { x: 50, y: 78, zone: "Central defence" },
+  "Defensive Midfielder": { x: 50, y: 62, zone: "Holding midfield" },
+  "Central Midfielder": { x: 50, y: 51, zone: "Central midfield" },
+  "Attacking Midfielder": { x: 50, y: 39, zone: "Between the lines" },
+  "Left Winger": { x: 18, y: 27, zone: "Left attacking channel" },
+  "Right Winger": { x: 82, y: 27, zone: "Right attacking channel" },
+  "Centre Forward": { x: 50, y: 17, zone: "Central attack" },
+};
+
+function PositionPitch({ player }: { player: DemoPlayer }) {
+  const position = pitchPositions[player.position] ?? {
+    x: 50,
+    y: 50,
+    zone: "Flexible role",
+  };
+  return (
+    <div
+      aria-label={`${player.name}: ${player.position}, ${position.zone}`}
+      className="position-pitch"
+      role="img"
+    >
+      <span className="pitch-goal pitch-goal-top" />
+      <span className="pitch-goal pitch-goal-bottom" />
+      <span className="pitch-box pitch-box-top" />
+      <span className="pitch-box pitch-box-bottom" />
+      <span
+        className="position-marker"
+        style={{ left: `${position.x}%`, top: `${position.y}%` }}
+      >
+        <i />
+        <b>{player.position}</b>
+      </span>
+      <small>{position.zone}</small>
+    </div>
+  );
+}
+
 function PlayersPanel(props: {
   players: DemoPlayer[];
   selectedPlayerId: string;
@@ -1592,6 +1819,51 @@ function PlayersPanel(props: {
           );
         })}
       </div>
+      {selected && (
+        <section className="selected-player-profile">
+          <PositionPitch player={selected} />
+          <div className="selected-player-copy">
+            <span className="section-label">POSITION INTELLIGENCE</span>
+            <div className="selected-player-heading">
+              <span
+                className="player-avatar"
+                style={{ background: selected.accent }}
+              >
+                {selected.initials}
+              </span>
+              <div>
+                <h2>{selected.name}</h2>
+                <p>
+                  {selected.position} · {selected.currentClub}
+                </p>
+              </div>
+            </div>
+            <dl className="selected-player-facts">
+              <div>
+                <dt>Primary role</dt>
+                <dd>{selected.position}</dd>
+              </div>
+              <div>
+                <dt>Nationality</dt>
+                <dd>{selected.nationality}</dd>
+              </div>
+              <div>
+                <dt>Market value</dt>
+                <dd>{selected.marketValue}</dd>
+              </div>
+              <div>
+                <dt>Contract</dt>
+                <dd>Until {selected.contractUntil}</dd>
+              </div>
+            </dl>
+            <p className="profile-note">
+              The red marker shows the player&apos;s primary operating zone.
+              Deal terms, club approvals and wallet signatures remain attached
+              to this exact player record.
+            </p>
+          </div>
+        </section>
+      )}
       <div className="selection-bar">
         <div>
           <span className="section-label">SELECTED TARGET</span>
@@ -1638,25 +1910,361 @@ function PlayersPanel(props: {
 
 function OffersPanel({
   offers,
+  marketplace,
+  players,
   player,
+  walletAddress,
+  busy,
+  onConnect,
+  onRegister,
+  onSubmitOffer,
+  onReviewPlayer,
   onNavigate,
 }: {
   offers: DemoOffer[];
+  marketplace: DemoState["marketplace"];
+  players: DemoPlayer[];
   player: DemoPlayer | undefined;
+  walletAddress: string | null;
+  busy: string | null;
+  onConnect: () => void;
+  onRegister: (input: {
+    name: string;
+    role: MarketplaceCounterparty["role"];
+    walletAddress: string;
+  }) => void;
+  onSubmitOffer: (input: {
+    counterpartyId: string;
+    playerId: string;
+    amountUsdt: string;
+    signingBonusUsdt: string;
+    note: string;
+  }) => void;
+  onReviewPlayer: (playerId: string) => void;
   onNavigate: (tab: Tab) => void;
 }) {
+  const [counterpartyName, setCounterpartyName] = useState("");
+  const [counterpartyRole, setCounterpartyRole] =
+    useState<MarketplaceCounterparty["role"]>("CLUB");
+  const [manualWallet, setManualWallet] = useState(walletAddress ?? "");
+  const [counterpartyId, setCounterpartyId] = useState("");
+  const [offerPlayerId, setOfferPlayerId] = useState(
+    player?.id ?? players[0]?.id ?? "",
+  );
+  const [offerAmount, setOfferAmount] = useState("900");
+  const [signingBonus, setSigningBonus] = useState("250");
+  const [offerNote, setOfferNote] = useState(
+    "Formal transfer proposal subject to medical and registration approval.",
+  );
+  const counterparties = marketplace?.counterparties ?? [];
+  const marketplaceOffers = marketplace?.offers ?? [];
+  const ownedCounterparties = walletAddress
+    ? counterparties.filter(
+        ({ walletAddress: registeredWallet }) =>
+          registeredWallet.toLowerCase() === walletAddress.toLowerCase(),
+      )
+    : [];
+
+  useEffect(() => {
+    if (walletAddress) setManualWallet(walletAddress);
+  }, [walletAddress]);
+
+  useEffect(() => {
+    if (!counterpartyId && ownedCounterparties[0]) {
+      setCounterpartyId(ownedCounterparties[0].id);
+    }
+  }, [counterpartyId, ownedCounterparties]);
+
+  useEffect(() => {
+    if (player) setOfferPlayerId(player.id);
+  }, [player]);
+
   return (
     <>
       <PanelHeader
-        kicker="OFFER CONTROL"
-        title="Every proposal, not just the winner."
-        copy="Incoming asks, outgoing counters, policy rejections, approvals, signatures, funding, and settlement stay visible as one commercial history."
+        kicker="SIGNED OFFER EXCHANGE"
+        title="Real wallets. Verifiable proposals."
+        copy="Clubs, agents, scouts and testers register a wallet identity with MetaMask, then sign every player offer. Pasted addresses alone never become trusted counterparties."
       />
+
+      <div className="marketplace-compose">
+        <form
+          className="marketplace-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onRegister({
+              name: counterpartyName,
+              role: counterpartyRole,
+              walletAddress: manualWallet,
+            });
+          }}
+        >
+          <header>
+            <span>01 / WALLET IDENTITY</span>
+            <h3>Register a counterparty</h3>
+            <p>
+              Enter the wallet manually, then prove ownership with the same
+              account in MetaMask.
+            </p>
+          </header>
+          <label>
+            Organization or tester name
+            <input
+              onChange={(event) => setCounterpartyName(event.target.value)}
+              placeholder="e.g. Northstar FC"
+              required
+              value={counterpartyName}
+            />
+          </label>
+          <div className="form-split">
+            <label>
+              Role
+              <select
+                onChange={(event) =>
+                  setCounterpartyRole(
+                    event.target.value as MarketplaceCounterparty["role"],
+                  )
+                }
+                value={counterpartyRole}
+              >
+                <option value="CLUB">Club</option>
+                <option value="AGENT">Agent</option>
+                <option value="SCOUT">Scout</option>
+                <option value="TESTER">Tester</option>
+              </select>
+            </label>
+            <label>
+              EVM wallet
+              <input
+                onChange={(event) => setManualWallet(event.target.value)}
+                placeholder="0x…"
+                required
+                value={manualWallet}
+              />
+            </label>
+          </div>
+          {!walletAddress ? (
+            <button className="launch-button" onClick={onConnect} type="button">
+              Connect MetaMask →
+            </button>
+          ) : (
+            <button
+              className="launch-button"
+              disabled={
+                busy !== null ||
+                counterpartyName.trim().length < 2 ||
+                !/^0x[a-fA-F0-9]{40}$/.test(manualWallet)
+              }
+              type="submit"
+            >
+              {busy === "counterparty-register"
+                ? "Waiting for signature…"
+                : "Sign & register wallet →"}
+            </button>
+          )}
+        </form>
+
+        <form
+          className="marketplace-form marketplace-form-dark"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSubmitOffer({
+              counterpartyId,
+              playerId: offerPlayerId,
+              amountUsdt: offerAmount,
+              signingBonusUsdt: signingBonus,
+              note: offerNote,
+            });
+          }}
+        >
+          <header>
+            <span>02 / SIGNED PROPOSAL</span>
+            <h3>Submit an offer</h3>
+            <p>
+              The connected wallet signs the exact player, amount, bonus and
+              note before the record reaches the shared inbox.
+            </p>
+          </header>
+          <div className="form-split">
+            <label>
+              Acting as
+              <select
+                onChange={(event) => setCounterpartyId(event.target.value)}
+                required
+                value={counterpartyId}
+              >
+                <option value="">Select registered identity</option>
+                {ownedCounterparties.map((counterparty) => (
+                  <option key={counterparty.id} value={counterparty.id}>
+                    {counterparty.name} / {counterparty.role}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Player
+              <select
+                onChange={(event) => setOfferPlayerId(event.target.value)}
+                required
+                value={offerPlayerId}
+              >
+                {players.map((candidate) => (
+                  <option key={candidate.id} value={candidate.id}>
+                    {candidate.name} / {candidate.position}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="form-split">
+            <label>
+              Offer / test USD₮
+              <input
+                inputMode="decimal"
+                min="1"
+                onChange={(event) => setOfferAmount(event.target.value)}
+                required
+                step="0.000001"
+                type="number"
+                value={offerAmount}
+              />
+            </label>
+            <label>
+              Signing bonus / test USD₮
+              <input
+                inputMode="decimal"
+                min="0"
+                onChange={(event) => setSigningBonus(event.target.value)}
+                required
+                step="0.000001"
+                type="number"
+                value={signingBonus}
+              />
+            </label>
+          </div>
+          <label>
+            Conditions
+            <textarea
+              maxLength={280}
+              onChange={(event) => setOfferNote(event.target.value)}
+              required
+              rows={3}
+              value={offerNote}
+            />
+          </label>
+          <button
+            className="launch-button"
+            disabled={
+              busy !== null ||
+              !counterpartyId ||
+              !offerPlayerId ||
+              offerNote.trim().length < 3
+            }
+            type="submit"
+          >
+            {busy === "marketplace-offer"
+              ? "Signing proposal…"
+              : "Sign & send offer →"}
+          </button>
+        </form>
+      </div>
+
+      <section className="counterparty-registry">
+        <div className="registry-heading">
+          <div>
+            <span className="section-label">VERIFIED DIRECTORY</span>
+            <h3>Registered counterparties</h3>
+          </div>
+          <strong>{counterparties.length}</strong>
+        </div>
+        {counterparties.length === 0 ? (
+          <p className="registry-empty">
+            No verified wallet profiles yet. Connect the first tester wallet
+            above.
+          </p>
+        ) : (
+          <div className="counterparty-list">
+            {counterparties.map((counterparty) => (
+              <article key={counterparty.id}>
+                <span>{counterparty.role}</span>
+                <strong>{counterparty.name}</strong>
+                <code>{shortHex(counterparty.walletAddress, 8)}</code>
+                <small>✓ OWNERSHIP SIGNED</small>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="marketplace-inbox">
+        <div className="registry-heading">
+          <div>
+            <span className="section-label">SHARED PLAYER INBOX</span>
+            <h3>Signed incoming offers</h3>
+          </div>
+          <strong>{marketplaceOffers.length}</strong>
+        </div>
+        {marketplaceOffers.length === 0 ? (
+          <p className="registry-empty">
+            Registered testers can now send the first wallet-signed offer.
+          </p>
+        ) : (
+          <div className="marketplace-offer-list">
+            {[...marketplaceOffers].reverse().map((offer) => {
+              const target = players.find(({ id }) => id === offer.playerId);
+              return (
+                <article key={offer.id}>
+                  <div>
+                    <span>↓ SIGNED INCOMING</span>
+                    <h4>{offer.from}</h4>
+                    <code>{shortHex(offer.fromWallet, 7)}</code>
+                  </div>
+                  <div>
+                    <small>PLAYER</small>
+                    <strong>{target?.name ?? offer.playerId}</strong>
+                    <span>{target?.position}</span>
+                  </div>
+                  <div>
+                    <small>TERMS</small>
+                    <strong>{usdt(offer.amountMicroUsdt)} test USD₮</strong>
+                    <span>
+                      {usdt(offer.signingBonusMicroUsdt)} signing bonus
+                    </span>
+                  </div>
+                  <div>
+                    <span className="offer-status status-received">
+                      SIGNATURE VERIFIED
+                    </span>
+                    <time>
+                      {new Date(offer.createdAt).toLocaleString("en-GB")}
+                    </time>
+                    <button
+                      className="offer-review-button"
+                      onClick={() => onReviewPlayer(offer.playerId)}
+                    >
+                      Review player →
+                    </button>
+                  </div>
+                  <p>{offer.note}</p>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <div className="deal-history-heading">
+        <span className="section-label">ACTIVE DEAL HISTORY</span>
+        <h3>Policy and settlement records</h3>
+      </div>
       {offers.length === 0 ? (
         <div className="empty-state">
           <span>↔</span>
-          <h3>No offer file yet</h3>
-          <p>Select a player and start a deal to open the inbox.</p>
+          <h3>No canonical deal file yet</h3>
+          <p>
+            Marketplace offers are non-custodial proposals. Select one player
+            and deploy a deal to begin escrow execution.
+          </p>
           <button
             className="launch-button"
             onClick={() => onNavigate("players")}

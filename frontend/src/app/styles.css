@@ -23,7 +23,9 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 button {
@@ -530,6 +532,167 @@ h1 em {
   font-size: 9px;
   padding: 15px 0 0;
 }
+.selected-player-profile {
+  background: #101c14;
+  border: 1px solid var(--ink);
+  color: white;
+  display: grid;
+  gap: clamp(30px, 5vw, 70px);
+  grid-template-columns: minmax(310px, 0.85fr) minmax(0, 1.15fr);
+  margin-top: 22px;
+  padding: clamp(22px, 4vw, 48px);
+}
+.position-pitch {
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.035) 0 12.5%,
+      transparent 12.5% 25%
+    ),
+    #176039;
+  border: 2px solid rgba(255, 255, 255, 0.82);
+  min-height: 430px;
+  overflow: visible;
+  position: relative;
+}
+.position-pitch::before {
+  border-top: 2px solid rgba(255, 255, 255, 0.72);
+  content: "";
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 50%;
+}
+.position-pitch::after {
+  border: 2px solid rgba(255, 255, 255, 0.72);
+  border-radius: 50%;
+  content: "";
+  height: 86px;
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 86px;
+}
+.pitch-box,
+.pitch-goal {
+  border: 2px solid rgba(255, 255, 255, 0.72);
+  left: 50%;
+  position: absolute;
+  transform: translateX(-50%);
+}
+.pitch-box {
+  height: 76px;
+  width: 55%;
+}
+.pitch-box-top {
+  border-top: 0;
+  top: 0;
+}
+.pitch-box-bottom {
+  border-bottom: 0;
+  bottom: 0;
+}
+.pitch-goal {
+  height: 13px;
+  width: 25%;
+}
+.pitch-goal-top {
+  border-top: 0;
+  top: 0;
+}
+.pitch-goal-bottom {
+  border-bottom: 0;
+  bottom: 0;
+}
+.position-marker {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  z-index: 3;
+}
+.position-marker i {
+  background: #ff4136;
+  border: 4px solid white;
+  border-radius: 50%;
+  box-shadow: 0 0 0 8px rgba(255, 65, 54, 0.25);
+  display: block;
+  height: 25px;
+  width: 25px;
+}
+.position-marker b {
+  background: white;
+  color: var(--ink);
+  font-family: monospace;
+  font-size: 8px;
+  left: 50%;
+  letter-spacing: 0.05em;
+  padding: 5px 7px;
+  position: absolute;
+  text-transform: uppercase;
+  top: 31px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.position-pitch > small {
+  background: rgba(7, 20, 11, 0.78);
+  font-family: monospace;
+  font-size: 8px;
+  left: 14px;
+  letter-spacing: 0.08em;
+  padding: 7px 9px;
+  position: absolute;
+  text-transform: uppercase;
+  top: 14px;
+  z-index: 4;
+}
+.selected-player-copy {
+  align-self: center;
+}
+.selected-player-heading {
+  align-items: center;
+  display: flex;
+  gap: 18px;
+  margin: 25px 0 30px;
+}
+.selected-player-heading h2 {
+  font-size: clamp(38px, 5vw, 68px);
+  letter-spacing: -0.06em;
+  line-height: 0.9;
+  margin: 0 0 9px;
+}
+.selected-player-heading p,
+.profile-note {
+  color: rgba(255, 255, 255, 0.62);
+  margin: 0;
+}
+.selected-player-facts {
+  border-left: 1px solid rgba(255, 255, 255, 0.2);
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  margin: 0 0 26px;
+}
+.selected-player-facts div {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+  border-right: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 16px;
+}
+.selected-player-facts dt {
+  color: var(--green);
+  font-family: monospace;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.selected-player-facts dd {
+  font-size: 16px;
+  font-weight: 800;
+  margin: 8px 0 0;
+}
+.profile-note {
+  line-height: 1.6;
+  max-width: 620px;
+}
 .selection-bar {
   align-items: end;
   background: var(--pitch);
@@ -569,6 +732,202 @@ h1 em {
   color: white;
   outline: 0;
   padding: 8px 0;
+}
+
+.marketplace-compose {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.marketplace-form {
+  background: #e3e2d6;
+  border: 1px solid var(--ink);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: clamp(22px, 3vw, 34px);
+}
+.marketplace-form-dark {
+  background: #102017;
+  color: white;
+}
+.marketplace-form header span,
+.marketplace-form label {
+  font-family: monospace;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.marketplace-form header span {
+  color: #517322;
+}
+.marketplace-form-dark header span {
+  color: var(--green);
+}
+.marketplace-form header h3 {
+  font-size: 31px;
+  letter-spacing: -0.04em;
+  margin: 10px 0;
+}
+.marketplace-form header p {
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 0;
+}
+.marketplace-form-dark header p {
+  color: rgba(255, 255, 255, 0.58);
+}
+.marketplace-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.marketplace-form input,
+.marketplace-form select,
+.marketplace-form textarea {
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid var(--line);
+  border-radius: 0;
+  color: var(--ink);
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 13px;
+  letter-spacing: 0;
+  outline: 0;
+  padding: 12px;
+  text-transform: none;
+  width: 100%;
+}
+.marketplace-form-dark input,
+.marketplace-form-dark select,
+.marketplace-form-dark textarea {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.25);
+  color: white;
+}
+.marketplace-form-dark select option {
+  color: var(--ink);
+}
+.marketplace-form textarea {
+  resize: vertical;
+}
+.form-split {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.counterparty-registry,
+.marketplace-inbox {
+  border: 1px solid var(--ink);
+  margin-top: 28px;
+}
+.registry-heading {
+  align-items: end;
+  border-bottom: 1px solid var(--ink);
+  display: flex;
+  justify-content: space-between;
+  padding: 22px;
+}
+.registry-heading h3,
+.deal-history-heading h3 {
+  font-size: 27px;
+  letter-spacing: -0.04em;
+  margin: 8px 0 0;
+}
+.registry-heading > strong {
+  font-size: 42px;
+}
+.registry-empty {
+  color: var(--muted);
+  margin: 0;
+  padding: 30px 22px;
+}
+.counterparty-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.counterparty-list article {
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 20px;
+}
+.counterparty-list article:last-child {
+  border-right: 0;
+}
+.counterparty-list span,
+.counterparty-list small,
+.counterparty-list code,
+.marketplace-offer-list small,
+.marketplace-offer-list code,
+.marketplace-offer-list time {
+  font-family: monospace;
+  font-size: 8px;
+}
+.counterparty-list span {
+  color: var(--muted);
+}
+.counterparty-list code {
+  overflow-wrap: anywhere;
+}
+.counterparty-list small {
+  color: #457511;
+  font-weight: 900;
+}
+.marketplace-offer-list article {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 18px;
+  grid-template-columns: 1fr 0.8fr 0.9fr 0.8fr;
+  padding: 22px;
+}
+.marketplace-offer-list article:last-child {
+  border-bottom: 0;
+}
+.marketplace-offer-list article > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.marketplace-offer-list article > div:first-child > span {
+  color: #2070a0;
+  font-family: monospace;
+  font-size: 8px;
+  font-weight: 900;
+}
+.marketplace-offer-list h4 {
+  font-size: 18px;
+  margin: 0;
+}
+.marketplace-offer-list article > p {
+  color: var(--muted);
+  grid-column: 1 / -1;
+  line-height: 1.45;
+  margin: -4px 0 0;
+}
+.marketplace-offer-list time {
+  color: var(--muted);
+}
+.offer-review-button {
+  align-self: start;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--ink);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 900;
+  margin-top: 5px;
+  padding: 4px 0;
+}
+.status-received {
+  background: #dff2b7;
+}
+.deal-history-heading {
+  margin: 70px 0 20px;
 }
 
 .offer-summary {
@@ -1527,6 +1886,22 @@ footer {
   .landing-control {
     grid-template-columns: 1fr;
   }
+  .selected-player-profile,
+  .marketplace-compose {
+    grid-template-columns: 1fr;
+  }
+  .position-pitch {
+    min-height: 520px;
+  }
+  .counterparty-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .counterparty-list article {
+    border-bottom: 1px solid var(--line);
+  }
+  .marketplace-offer-list article {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .landing-hero {
     min-height: auto;
   }
@@ -1584,6 +1959,18 @@ footer {
   .offer-table article {
     align-items: start;
     grid-template-columns: 1fr 1fr;
+  }
+  .form-split,
+  .selected-player-facts,
+  .counterparty-list,
+  .marketplace-offer-list article {
+    grid-template-columns: 1fr;
+  }
+  .position-pitch {
+    min-height: 420px;
+  }
+  .counterparty-list article {
+    border-right: 0;
   }
   .offer-status {
     justify-self: start;

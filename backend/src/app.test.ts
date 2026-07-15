@@ -1,3 +1,8 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { Wallet } from "ethers";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { buildApp } from "./app.js";
@@ -17,9 +22,15 @@ const config = {
 
 describe("backend", () => {
   const apps: Awaited<ReturnType<typeof buildApp>>[] = [];
+  const dataDirectories: string[] = [];
 
   afterEach(async () => {
     await Promise.all(apps.splice(0).map((app) => app.close()));
+    await Promise.all(
+      dataDirectories
+        .splice(0)
+        .map((directory) => rm(directory, { recursive: true, force: true })),
+    );
   });
 
   it("reports health without external dependencies", async () => {
@@ -43,11 +54,76 @@ describe("backend", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().players).toHaveLength(4);
+    expect(response.json().players).toHaveLength(6);
     expect(response.json().players[0]).toMatchObject({
       id: "mert-kaya",
       position: "Centre Forward",
       currentClub: "Bosphorus United",
+    });
+  });
+
+  it("persists wallet-signed counterparties and player offers", async () => {
+    const dataDirectory = await mkdtemp(join(tmpdir(), "laforza-marketplace-"));
+    dataDirectories.push(dataDirectory);
+    const app = await buildApp({ ...config, DATA_DIR: dataDirectory });
+    apps.push(app);
+    const wallet = Wallet.createRandom();
+    const registration = {
+      requestId: crypto.randomUUID(),
+      name: "Northstar Test Club",
+      role: "TESTER" as const,
+      walletAddress: wallet.address,
+      createdAt: new Date().toISOString(),
+    };
+    const registrationSignature = await wallet.signMessage(
+      JSON.stringify({
+        domain: "laforza.marketplace",
+        action: "REGISTER_COUNTERPARTY",
+        ...registration,
+      }),
+    );
+    const registered = await app.inject({
+      method: "POST",
+      url: "/api/v1/demo/marketplace/counterparties",
+      payload: { ...registration, signature: registrationSignature },
+    });
+    expect(registered.statusCode).toBe(200);
+    const counterparty = registered.json().marketplace.counterparties[0];
+    expect(counterparty).toMatchObject({
+      name: "Northstar Test Club",
+      role: "TESTER",
+      walletAddress: wallet.address,
+    });
+
+    const offer = {
+      requestId: crypto.randomUUID(),
+      counterpartyId: counterparty.id as string,
+      playerId: "amina-yilmaz",
+      walletAddress: wallet.address,
+      amountMicroUsdt: "1250000000",
+      signingBonusMicroUsdt: "250000000",
+      note: "Subject to medical and international registration approval.",
+      createdAt: new Date().toISOString(),
+    };
+    const offerSignature = await wallet.signMessage(
+      JSON.stringify({
+        domain: "laforza.marketplace",
+        action: "SUBMIT_OFFER",
+        ...offer,
+      }),
+    );
+    const submitted = await app.inject({
+      method: "POST",
+      url: "/api/v1/demo/marketplace/offers",
+      payload: { ...offer, signature: offerSignature },
+    });
+    expect(submitted.statusCode).toBe(200);
+    expect(submitted.json().marketplace.offers[0]).toMatchObject({
+      playerId: "amina-yilmaz",
+      from: "Northstar Test Club",
+      fromWallet: wallet.address,
+      amountMicroUsdt: "1250000000",
+      status: "RECEIVED",
     });
   });
 

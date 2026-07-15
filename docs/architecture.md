@@ -53,6 +53,24 @@ La Forza proves one narrow flow end to end:
 - Demo events are append-only JSONL. On-chain balances remain the settlement
   source of truth.
 
+## Signed offer exchange
+
+The pre-deal marketplace is deliberately separate from escrow execution:
+
+1. A club, agent, scout, or tester enters an EVM address and profile name.
+2. The browser asks that exact MetaMask account to sign a canonical registration
+   payload containing a one-time request ID and timestamp.
+3. The backend recovers the signer, rejects mismatched or expired signatures,
+   and persists the verified profile in `marketplace.json` with an atomic
+   replace.
+4. Every offer signs the exact counterparty, player, amount, signing bonus,
+   conditions, request ID, and timestamp. Replayed request IDs are rejected.
+5. Marketplace offers remain non-custodial proposals. Moving money still
+   requires the separate EIP-712 authorization and `DeadlineEscrow` flow.
+
+This keeps pasted wallet addresses from impersonating a counterparty while
+allowing independent test wallets to share one durable offer inbox.
+
 ## Track boundary
 
 The current entry uses WDK deeply and does not claim Pears or QVAC. A future P2P

@@ -20,6 +20,7 @@ import {
   parseEther,
   recoverAddress,
   toUtf8Bytes,
+  verifyMessage,
   type InterfaceAbi,
   type TransactionReceipt,
 } from "ethers";
@@ -29,6 +30,10 @@ import { join } from "node:path";
 import { WdkDealAgent } from "../agents/wdk-deal-agent.js";
 import type { AppConfig } from "../config.js";
 import { EventStore } from "../events/event-store.js";
+import {
+  MarketplaceStore,
+  type CounterpartyRole,
+} from "../marketplace/marketplace-store.js";
 import { demoPlayers, playerById, type DemoPlayer } from "./player-catalog.js";
 import {
   LocalWalletVault,
@@ -95,6 +100,27 @@ export type ExternalDeploymentInput = {
   mintTxHash: string;
 };
 
+export type RegisterCounterpartyInput = {
+  requestId: string;
+  name: string;
+  role: CounterpartyRole;
+  walletAddress: string;
+  createdAt: string;
+  signature: string;
+};
+
+export type SubmitMarketplaceOfferInput = {
+  requestId: string;
+  counterpartyId: string;
+  playerId: string;
+  walletAddress: string;
+  amountMicroUsdt: string;
+  signingBonusMicroUsdt: string;
+  note: string;
+  createdAt: string;
+  signature: string;
+};
+
 type EvmWdkAccount = {
   approve(input: {
     token: string;
@@ -126,20 +152,143 @@ function publicRuntimeWallets(runtime: DemoRuntime): PublicWallet[] {
   );
 }
 
+function signedRequestIsFresh(createdAt: string): boolean {
+  const timestamp = Date.parse(createdAt);
+  return (
+    Number.isFinite(timestamp) &&
+    Math.abs(Date.now() - timestamp) <= 10 * 60 * 1_000
+  );
+}
+
+function counterpartyRegistrationMessage(input: RegisterCounterpartyInput) {
+  return JSON.stringify({
+    domain: "laforza.marketplace",
+    action: "REGISTER_COUNTERPARTY",
+    requestId: input.requestId,
+    name: input.name,
+    role: input.role,
+    walletAddress: input.walletAddress,
+    createdAt: input.createdAt,
+  });
+}
+
+function marketplaceOfferMessage(input: SubmitMarketplaceOfferInput) {
+  return JSON.stringify({
+    domain: "laforza.marketplace",
+    action: "SUBMIT_OFFER",
+    requestId: input.requestId,
+    counterpartyId: input.counterpartyId,
+    playerId: input.playerId,
+    walletAddress: input.walletAddress,
+    amountMicroUsdt: input.amountMicroUsdt,
+    signingBonusMicroUsdt: input.signingBonusMicroUsdt,
+    note: input.note,
+    createdAt: input.createdAt,
+  });
+}
+
 export class DemoService {
   readonly #provider: JsonRpcProvider;
   readonly #vault: LocalWalletVault;
   readonly #events: EventStore;
+  readonly #marketplace: MarketplaceStore;
   #runtime?: DemoRuntime;
 
   constructor(private readonly config: AppConfig) {
     this.#provider = new JsonRpcProvider(config.CHAIN_RPC_URL, config.CHAIN_ID);
     this.#vault = new LocalWalletVault(join(config.DATA_DIR, "wallets.json"));
     this.#events = new EventStore(join(config.DATA_DIR, "events.jsonl"));
+    this.#marketplace = new MarketplaceStore(
+      join(config.DATA_DIR, "marketplace.json"),
+    );
   }
 
   players(): readonly DemoPlayer[] {
     return demoPlayers;
+  }
+
+  async registerCounterparty(
+    input: RegisterCounterpartyInput,
+  ): Promise<Record<string, unknown>> {
+    if (!signedRequestIsFresh(input.createdAt)) {
+      throw new Error("The wallet registration signature has expired");
+    }
+    const walletAddress = getAddress(input.walletAddress);
+    const signer = getAddress(
+      verifyMessage(counterpartyRegistrationMessage(input), input.signature),
+    );
+    if (signer !== walletAddress) {
+      throw new Error("The registration signature does not match this wallet");
+    }
+    const counterparty = await this.#marketplace.register({
+      requestId: input.requestId,
+      name: input.name,
+      role: input.role,
+      walletAddress,
+      createdAt: input.createdAt,
+      signature: input.signature,
+    });
+    await this.#events.append("COUNTERPARTY_REGISTERED", {
+      counterpartyId: counterparty.id,
+      name: counterparty.name,
+      role: counterparty.role,
+      walletAddress,
+    });
+    return this.state();
+  }
+
+  async submitMarketplaceOffer(
+    input: SubmitMarketplaceOfferInput,
+  ): Promise<Record<string, unknown>> {
+    if (!signedRequestIsFresh(input.createdAt)) {
+      throw new Error("The offer signature has expired");
+    }
+    const marketplace = await this.#marketplace.read();
+    const counterparty = marketplace.counterparties.find(
+      (candidate) => candidate.id === input.counterpartyId,
+    );
+    if (!counterparty) throw new Error("Register this wallet before offering");
+    const walletAddress = getAddress(input.walletAddress);
+    if (counterparty.walletAddress !== walletAddress) {
+      throw new Error("This profile belongs to a different wallet");
+    }
+    const signer = getAddress(
+      verifyMessage(marketplaceOfferMessage(input), input.signature),
+    );
+    if (signer !== walletAddress) {
+      throw new Error("The offer signature does not match this wallet");
+    }
+    const player = playerById(input.playerId);
+    const amount = BigInt(input.amountMicroUsdt);
+    const signingBonus = BigInt(input.signingBonusMicroUsdt);
+    if (amount <= 0n || amount > 100_000_000n * USDT) {
+      throw new Error("Offer amount is outside the supported test range");
+    }
+    if (signingBonus < 0n || signingBonus > amount) {
+      throw new Error("Signing bonus cannot exceed the offer amount");
+    }
+    const offer = await this.#marketplace.addOffer({
+      requestId: input.requestId,
+      playerId: player.id,
+      counterpartyId: counterparty.id,
+      from: counterparty.name,
+      fromWallet: walletAddress,
+      to: "Atlas FC",
+      amountMicroUsdt: amount.toString(),
+      signingBonusMicroUsdt: signingBonus.toString(),
+      note: input.note,
+      status: "RECEIVED",
+      signature: input.signature,
+      createdAt: input.createdAt,
+    });
+    await this.#events.append("MARKETPLACE_OFFER_RECEIVED", {
+      offerId: offer.id,
+      playerId: player.id,
+      counterpartyId: counterparty.id,
+      walletAddress,
+      amountMicroUsdt: amount.toString(),
+    });
+    return this.state();
   }
 
   async participants(
@@ -814,13 +963,17 @@ export class DemoService {
   }
 
   async state(): Promise<Record<string, unknown>> {
-    const events = await this.#events.list();
+    const [events, marketplace] = await Promise.all([
+      this.#events.list(),
+      this.#marketplace.read(),
+    ]);
     if (!this.#runtime)
       return {
         initialized: false,
         network: this.#networkInfo(),
         players: demoPlayers,
         offers: [],
+        marketplace,
         events,
       };
     const runtime = this.#runtime;
@@ -891,6 +1044,7 @@ export class DemoService {
       players: demoPlayers,
       selectedPlayer: runtime.selectedPlayer,
       offers: runtime.offers,
+      marketplace,
       signatures: Object.keys(runtime.signatures),
       execution:
         runtime.signatures.BUYER &&
