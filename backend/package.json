@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "vercel-build": "npm --prefix ../packages/domain run build && npm --prefix ../packages/protocol run build && npm --prefix ../contracts run build && node scripts/prepare-contract-artifacts.mjs && npm run build",
+    "vercel-build": "npm --prefix ../packages/domain run build && npm --prefix ../packages/protocol run build && npm --prefix ../contracts run build && node scripts/prepare-contract-artifacts.mjs && node scripts/prepare-native-prebuilds.mjs && npm run build",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "test": "vitest run src",

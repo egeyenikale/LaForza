@@ -35,6 +35,20 @@ describe("backend", () => {
     );
   });
 
+  it("reports the API entry points at the root route", async () => {
+    const app = await buildApp(config);
+    apps.push(app);
+    const response = await app.inject({ method: "GET", url: "/" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      service: "laforza-backend",
+      status: "ok",
+      health: "/health",
+      apiBase: "/api/v1",
+    });
+  });
+
   it("reports health without external dependencies", async () => {
     const app = await buildApp(config);
     apps.push(app);

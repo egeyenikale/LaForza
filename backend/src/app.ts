@@ -18,6 +18,13 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
     methods: ["GET", "POST", "OPTIONS"],
   });
 
+  app.get("/", async () => ({
+    service: "laforza-backend",
+    status: "ok",
+    health: "/health",
+    apiBase: "/api/v1",
+  }));
+
   app.get("/health", async () => ({
     service: "laforza-backend",
     status: "ok",
