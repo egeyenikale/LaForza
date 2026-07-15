@@ -3,6 +3,7 @@
   "framework": null,
   "installCommand": "cd .. && npm ci",
   "buildCommand": "npm run vercel-build",
+  "outputDirectory": "public",
   "functions": {
     "api/index.ts": {
       "includeFiles": "contract-artifacts/**",
