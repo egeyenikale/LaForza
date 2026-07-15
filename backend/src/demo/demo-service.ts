@@ -27,6 +27,7 @@ import { join } from "node:path";
 import { WdkDealAgent } from "../agents/wdk-deal-agent.js";
 import type { AppConfig } from "../config.js";
 import { EventStore } from "../events/event-store.js";
+import { demoPlayers, playerById, type DemoPlayer } from "./player-catalog.js";
 import {
   LocalWalletVault,
   type PublicWallet,
@@ -47,6 +48,25 @@ type Artifact = {
 
 type DemoSignatures = Partial<Record<"BUYER" | "SELLER" | "PLAYER", string>>;
 
+type DemoOffer = {
+  id: string;
+  direction: "INCOMING" | "OUTGOING";
+  from: string;
+  to: string;
+  amountMicroUsdt: string;
+  signingBonusMicroUsdt: string;
+  status:
+    | "RECEIVED"
+    | "REJECTED_BY_POLICY"
+    | "AWAITING_HUMAN_APPROVAL"
+    | "APPROVED"
+    | "FULLY_SIGNED"
+    | "FUNDED"
+    | "SETTLED";
+  createdAt: string;
+  note: string;
+};
+
 type DemoRuntime = {
   wallets: PublicWallet[];
   tokenAddress: string;
@@ -56,6 +76,8 @@ type DemoRuntime = {
   signatures: DemoSignatures;
   humanApprovedDigest?: string;
   transactions: Record<string, string>;
+  selectedPlayer: DemoPlayer;
+  offers: DemoOffer[];
 };
 
 type EvmWdkAccount = {
@@ -93,8 +115,16 @@ export class DemoService {
     this.#events = new EventStore(join(config.DATA_DIR, "events.jsonl"));
   }
 
-  async bootstrap(passkey: string): Promise<Record<string, unknown>> {
+  players(): readonly DemoPlayer[] {
+    return demoPlayers;
+  }
+
+  async bootstrap(
+    passkey: string,
+    playerId = "mert-kaya",
+  ): Promise<Record<string, unknown>> {
     await this.#provider.getBlockNumber();
+    const selectedPlayer = playerById(playerId);
     const wallets = (await this.#vault.exists())
       ? await this.#vault.list(passkey)
       : await this.#vault.create(passkey);
@@ -127,7 +157,7 @@ export class DemoService {
       amount: MILESTONE_AMOUNT,
       beneficiary: seller,
     };
-    const dealId = id(`laforza-demo-${now}`);
+    const dealId = id(`laforza-${selectedPlayer.id}-${now}`);
     const escrow = await new ContractFactory(
       escrowArtifact.abi,
       escrowArtifact.bytecode,
@@ -188,6 +218,20 @@ export class DemoService {
       milestone,
       signatures: {},
       transactions: {},
+      selectedPlayer,
+      offers: [
+        {
+          id: `offer-${now}-seller-ask`,
+          direction: "INCOMING",
+          from: selectedPlayer.currentClub,
+          to: "Atlas FC",
+          amountMicroUsdt: "950000000",
+          signingBonusMicroUsdt: jsonBigInt(SIGNING_BONUS),
+          status: "RECEIVED",
+          createdAt: new Date().toISOString(),
+          note: `Initial asking terms for ${selectedPlayer.name}`,
+        },
+      ],
     };
     await this.#events.clear();
     await this.#events.append("DEMO_BOOTSTRAPPED", {
@@ -195,6 +239,8 @@ export class DemoService {
       tokenAddress,
       escrowAddress,
       authorizationDigest: localDigest,
+      playerId: selectedPlayer.id,
+      playerName: selectedPlayer.name,
       note: "Local test chain only — no real funds",
     });
     return this.state();
@@ -210,6 +256,17 @@ export class DemoService {
       },
     };
     const result = await this.#evaluateBuyer(passkey, envelope);
+    runtime.offers.push({
+      id: `offer-${Date.now()}-over-budget`,
+      direction: "OUTGOING",
+      from: "Atlas FC Agent",
+      to: runtime.selectedPlayer.currentClub,
+      amountMicroUsdt: "1100000000",
+      signingBonusMicroUsdt: jsonBigInt(SIGNING_BONUS),
+      status: "REJECTED_BY_POLICY",
+      createdAt: new Date().toISOString(),
+      note: result.reason ?? "Club mandate rejected this proposal",
+    });
     await this.#events.append("POLICY_DENIED_OVER_BUDGET", {
       amountMicroUsdt: "1100000000",
       decision: result.decision,
@@ -222,6 +279,17 @@ export class DemoService {
   async reviewCounter(passkey: string): Promise<Record<string, unknown>> {
     const runtime = this.#requireRuntime();
     const result = await this.#evaluateBuyer(passkey, runtime.envelope);
+    runtime.offers.push({
+      id: `offer-${Date.now()}-counter`,
+      direction: "OUTGOING",
+      from: "Atlas FC Agent",
+      to: runtime.selectedPlayer.currentClub,
+      amountMicroUsdt: jsonBigInt(TOTAL_AMOUNT),
+      signingBonusMicroUsdt: jsonBigInt(SIGNING_BONUS),
+      status: "AWAITING_HUMAN_APPROVAL",
+      createdAt: new Date().toISOString(),
+      note: "Counter terms fit the mandate but cross the approval threshold",
+    });
     await this.#events.append("HUMAN_APPROVAL_REQUIRED", {
       amountMicroUsdt: jsonBigInt(TOTAL_AMOUNT),
       decision: result.decision,
@@ -244,6 +312,7 @@ export class DemoService {
     if (!result.signature)
       throw new Error("Buyer authorization was not signed");
     runtime.signatures.BUYER = result.signature;
+    this.#updateAcceptedOffer(runtime, "APPROVED");
     await this.#events.append("BUYER_AUTHORIZATION_SIGNED", {
       signer: roleAddress(runtime.wallets, "BUYER"),
       authorizationDigest: digest,
@@ -270,6 +339,7 @@ export class DemoService {
     if (!result.signature)
       throw new Error(`${role} authorization was not signed`);
     runtime.signatures[role] = result.signature;
+    if (role === "PLAYER") this.#updateAcceptedOffer(runtime, "FULLY_SIGNED");
     await this.#events.append(`${role}_AUTHORIZATION_SIGNED`, {
       signer: roleAddress(runtime.wallets, role),
       authorizationDigest: result.authorizationDigest,
@@ -344,6 +414,7 @@ export class DemoService {
     );
     runtime.transactions.approval = transactions.approval;
     runtime.transactions.funding = transactions.funding;
+    this.#updateAcceptedOffer(runtime, "FUNDED");
     await this.#events.append("ESCROW_FUNDED", {
       approveTxHash: transactions.approval,
       fundingTxHash: transactions.funding,
@@ -391,6 +462,7 @@ export class DemoService {
       },
     );
     runtime.transactions.release = transactionHash;
+    this.#updateAcceptedOffer(runtime, "SETTLED");
     await this.#events.append("MILESTONE_RELEASED", {
       transactionHash,
       milestoneId: runtime.milestone.id,
@@ -402,7 +474,8 @@ export class DemoService {
 
   async state(): Promise<Record<string, unknown>> {
     const events = await this.#events.list();
-    if (!this.#runtime) return { initialized: false, events };
+    if (!this.#runtime)
+      return { initialized: false, players: demoPlayers, offers: [], events };
     const runtime = this.#runtime;
     const tokenArtifact = await this.#readArtifact(
       "contracts/test/MockUSDT.sol/MockUSDT.json",
@@ -441,8 +514,8 @@ export class DemoService {
         disclaimer: "Demo-only test USDT. No real funds or mainnet assets.",
       },
       deal: {
-        title: "Atlas FC × Bosphorus United — International Registration",
-        playerName: "Mert Kaya",
+        title: `Atlas FC × ${runtime.selectedPlayer.currentClub} — International Registration`,
+        playerName: runtime.selectedPlayer.name,
         totalAmountMicroUsdt: jsonBigInt(TOTAL_AMOUNT),
         signingBonusMicroUsdt: jsonBigInt(SIGNING_BONUS),
         milestoneAmountMicroUsdt: jsonBigInt(MILESTONE_AMOUNT),
@@ -455,6 +528,9 @@ export class DemoService {
         escrow: runtime.escrowAddress,
       },
       wallets: runtime.wallets,
+      players: demoPlayers,
+      selectedPlayer: runtime.selectedPlayer,
+      offers: runtime.offers,
       signatures: Object.keys(runtime.signatures),
       humanApproved: Boolean(runtime.humanApprovedDigest),
       transactions: runtime.transactions,
@@ -601,6 +677,19 @@ export class DemoService {
   #requireRuntime(): DemoRuntime {
     if (!this.#runtime) throw new Error("Demo is not initialized");
     return this.#runtime;
+  }
+
+  #updateAcceptedOffer(
+    runtime: DemoRuntime,
+    status: DemoOffer["status"],
+  ): void {
+    const offer = [...runtime.offers]
+      .reverse()
+      .find(
+        ({ amountMicroUsdt }) => amountMicroUsdt === jsonBigInt(TOTAL_AMOUNT),
+      );
+    if (!offer) throw new Error("Accepted counteroffer was not found");
+    offer.status = status;
   }
 
   async #readArtifact(relativePath: string): Promise<Artifact> {

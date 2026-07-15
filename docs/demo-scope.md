@@ -7,8 +7,9 @@ npm install
 npm run demo
 ```
 
-Open `http://localhost:3000`, keep the prefilled local passkey, and select
-**Deploy local deal**.
+Open `http://localhost:3000`, enter the **Players** tab, choose a player, keep the
+prefilled local passkey, and select **Start this deal**. The selected player and
+current club will propagate into the active file, offer history, and deal room.
 
 ## Seven visible proofs
 
@@ -24,6 +25,10 @@ Open `http://localhost:3000`, keep the prefilled local passkey, and select
 
 The audit trail, actor balances, contract addresses, authorization digest, and
 all three write transaction hashes are visible on the page.
+
+The **Offers** tab preserves the initial club ask, the policy-rejected proposal,
+and the active 900 test USD₮ counter as separate commercial records. Its state
+progresses through human approval, signatures, funding, and settlement.
 
 ## Expected final state
 

@@ -22,10 +22,19 @@ Open [http://localhost:3000](http://localhost:3000). The command starts:
 - the Fastify API on `127.0.0.1:4000`;
 - the Next.js deal room on `localhost:3000`.
 
-Click the seven deal-room actions in order. They demonstrate a policy rejection,
-a human approval boundary, three EIP-712 signatures, a WDK token approval, escrow
-funding, and verifier-only milestone release. Every amount is local **test USD₮**;
-there are no real funds.
+The application is split into six working areas:
+
+- **Overview** — current file, progress, latest evidence, and released value;
+- **Players** — a selectable four-player shortlist with football and contract context;
+- **Offers** — incoming asks, rejected proposals, the active counter, and its status;
+- **Deal room** — the seven policy, signature, funding, and release actions;
+- **Ledger** — events, EIP-712 digest, balances, and transaction hashes;
+- **About** — the product problem, control model, track honesty, and local run guide.
+
+Select a player and click the seven deal-room actions in order. They demonstrate
+a policy rejection, a human approval boundary, three EIP-712 signatures, a WDK
+token approval, escrow funding, and verifier-only milestone release. Every amount
+is local **test USD₮**; there are no real funds.
 
 ## Why this is a real WDK entry
 
@@ -53,8 +62,8 @@ judge-runnable track is stronger than decorative SDK labels.
 ## Repository layout
 
 ```text
-frontend/          Next.js football deal room and live demo controls
-backend/           Fastify API, WDK policies, encrypted wallet vault, event log
+frontend/          Tabbed football operations workspace and live demo controls
+backend/           Player catalog, offer book, WDK policies, vault, event log
 packages/domain/   Shared validation and deterministic deal state machine
 packages/protocol/ Canonical EIP-712 authorization and milestone hashing
 contracts/         DeadlineEscrow, MockUSDT, and adversarial contract tests

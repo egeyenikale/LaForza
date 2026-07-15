@@ -7,15 +7,30 @@ const passkeySchema = z.object({
   passkey: z.string().min(12).max(200),
 });
 
+const bootstrapSchema = passkeySchema.extend({
+  playerId: z.string().min(2).max(80).default("mert-kaya"),
+});
+
 export const registerDemoRoutes: FastifyPluginAsync<{
   demoService: DemoService;
 }> = async (app, { demoService }) => {
   app.get("/demo/state", async () => demoService.state());
+  app.get("/demo/players", async () => ({ players: demoService.players() }));
 
   app.post("/demo/bootstrap", async (request, reply) => {
-    const parsed = passkeySchema.safeParse(request.body);
+    const parsed = bootstrapSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send(parsed.error.flatten());
-    return demoService.bootstrap(parsed.data.passkey);
+    try {
+      return await demoService.bootstrap(
+        parsed.data.passkey,
+        parsed.data.playerId,
+      );
+    } catch (error) {
+      request.log.warn({ error }, "demo bootstrap failed");
+      return reply.code(400).send({
+        error: error instanceof Error ? error.message : "Demo bootstrap failed",
+      });
+    }
   });
 
   const action = (

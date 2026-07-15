@@ -33,4 +33,21 @@ describe("backend", () => {
       service: "laforza-backend",
     });
   });
+
+  it("exposes the selectable football player catalog", async () => {
+    const app = await buildApp(config);
+    apps.push(app);
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/demo/players",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().players).toHaveLength(4);
+    expect(response.json().players[0]).toMatchObject({
+      id: "mert-kaya",
+      position: "Centre Forward",
+      currentClub: "Bosphorus United",
+    });
+  });
 });
