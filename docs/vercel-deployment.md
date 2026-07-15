@@ -67,6 +67,26 @@ failures.
 Deploy, open `/app`, connect MetaMask, and switch to Base Sepolia. The connected
 wallet must have Base Sepolia ETH before it can deploy the test token and escrow.
 
+## 3.1 Contract deployment and test USDt
+
+Do not configure a deployer private key in either Vercel project. Contract
+deployment deliberately happens from the connected buyer's MetaMask account:
+
+1. MetaMask deploys the six-decimal `MockUSDT` contract on Base Sepolia.
+2. MetaMask deploys the versioned `DeadlineEscrow` for the selected player and
+   exact buyer, seller, player, verifier, amount, and deadlines.
+3. The faucet calls the token's on-chain `mint` function. The minted balance is
+   therefore held by the connected address and can be inspected on BaseScan; it
+   is not a UI-only balance.
+4. Funding performs real ERC-20 `approve` and `transferFrom` calls. The signing
+   bonus is transferred to the player during funding, and the milestone amount
+   is transferred to the selling club when the WDK verifier releases it.
+
+This is real testnet settlement using a La Forza test token, not official
+mainnet Tether USDt. The open mint function is intentional for hackathon
+testing and must be replaced with an access-controlled issuer before any
+production-value deployment.
+
 ## 4. Production smoke test
 
 1. `/health` reports Redis and chain 84532.
