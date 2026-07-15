@@ -9,7 +9,10 @@ import type { Policy } from "@tetherto/wdk";
 import {
   Contract,
   ContractFactory,
+  dataLength,
+  dataSlice,
   getAddress,
+  getCreate2Address,
   Interface,
   JsonRpcProvider,
   NonceManager,
@@ -51,6 +54,9 @@ const SIGNING_BONUS = 250n * USDT;
 const MILESTONE_AMOUNT = 650n * USDT;
 const BUYER_MAXIMUM = 1_000n * USDT;
 const HUMAN_APPROVAL_THRESHOLD = 750n * USDT;
+const CREATE2_DEPLOYER = getAddress(
+  "0x4e59b44847b379578588920cA78FbF26c0B4956C",
+);
 const BASE_SEPOLIA_TEST_TOKEN: TestTokenRecord = {
   address: "0xEb1A4eee8C8E7f0429e1F0A2AC33584D0A6124b4",
   deployer: "0x63e7DFb5e96f3e3911110511A89Ea072Cd2c0030",
@@ -424,13 +430,10 @@ export class DemoService {
     if (BigInt(decimals) !== 6n) {
       throw new Error("Test USDt must use six decimals");
     }
-    if (
-      deploymentReceipt.from.toLowerCase() !== deployer.toLowerCase() ||
-      !deploymentReceipt.contractAddress ||
-      getAddress(deploymentReceipt.contractAddress) !== tokenAddress
-    ) {
+    if (deploymentReceipt.from.toLowerCase() !== deployer.toLowerCase()) {
       throw new Error("Token deployment receipt does not match this wallet");
     }
+    await this.#assertDeploymentTarget(deploymentReceipt, tokenAddress);
     if (!mintReceipt.to || getAddress(mintReceipt.to) !== tokenAddress) {
       throw new Error("Mint transaction does not target test USDt");
     }
@@ -604,14 +607,10 @@ export class DemoService {
         `Escrow deployment came from ${escrowDeploymentReceipt.from}; expected buyer ${buyer}`,
       );
     }
-    if (getAddress(tokenDeploymentReceipt.contractAddress!) !== tokenAddress) {
-      throw new Error("Token deployment receipt does not match the token");
-    }
-    if (
-      getAddress(escrowDeploymentReceipt.contractAddress!) !== escrowAddress
-    ) {
-      throw new Error("Escrow deployment receipt does not match the escrow");
-    }
+    await Promise.all([
+      this.#assertDeploymentTarget(tokenDeploymentReceipt, tokenAddress),
+      this.#assertDeploymentTarget(escrowDeploymentReceipt, escrowAddress),
+    ]);
 
     if (sharedToken && sharedToken.address !== tokenAddress) {
       throw new Error("Escrow does not use the shared La Forza test USDt");
@@ -1501,6 +1500,39 @@ export class DemoService {
       "contracts/DeadlineEscrow.sol/DeadlineEscrow.json",
     );
     return new Interface(artifact.abi);
+  }
+
+  async #assertDeploymentTarget(
+    receipt: TransactionReceipt,
+    expectedAddress: string,
+  ): Promise<void> {
+    if (receipt.contractAddress) {
+      if (getAddress(receipt.contractAddress) !== getAddress(expectedAddress)) {
+        throw new Error("Deployment receipt contract address does not match");
+      }
+      return;
+    }
+
+    const transaction = await this.#provider.getTransaction(receipt.hash);
+    if (
+      !transaction?.to ||
+      getAddress(transaction.to) !== CREATE2_DEPLOYER ||
+      dataLength(transaction.data) <= 32
+    ) {
+      throw new Error("Deployment receipt is not a supported CREATE2 call");
+    }
+    const salt = dataSlice(transaction.data, 0, 32);
+    const initCode = dataSlice(transaction.data, 32);
+    const deployedAddress = getCreate2Address(
+      CREATE2_DEPLOYER,
+      salt,
+      keccak256(initCode),
+    );
+    if (getAddress(deployedAddress) !== getAddress(expectedAddress)) {
+      throw new Error(
+        "CREATE2 transaction does not match the deployed contract",
+      );
+    }
   }
 
   async #wait(hash: string): Promise<TransactionReceipt> {

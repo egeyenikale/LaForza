@@ -3,11 +3,12 @@
 import {
   AbiCoder,
   BrowserProvider,
+  concat,
   Contract,
   ContractFactory,
   formatEther,
   getAddress,
-  getCreateAddress,
+  getCreate2Address,
   id,
   Interface,
   keccak256,
@@ -25,6 +26,7 @@ const TEST_USDT_UNIT = 1_000_000n;
 const TEST_USDT_FAUCET_AMOUNT = 50_000n * TEST_USDT_UNIT;
 const BASE_SEPOLIA_CHAIN_ID = 84532;
 const BASE_SEPOLIA_TEST_TOKEN = "0xEb1A4eee8C8E7f0429e1F0A2AC33584D0A6124b4";
+const CREATE2_DEPLOYER = "0x4e59b44847b379578588920cA78FbF26c0B4956C";
 
 type Tab = "overview" | "players" | "offers" | "deal" | "ledger" | "about";
 
@@ -291,23 +293,6 @@ type RecoveredDeployment = {
 const wait = (milliseconds: number) =>
   new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
-const walletErrorMessage = (error: unknown) => {
-  const nested = error as {
-    message?: string;
-    error?: { message?: string };
-    info?: { error?: { message?: string } };
-  };
-  return (
-    nested?.info?.error?.message ??
-    nested?.error?.message ??
-    nested?.message ??
-    ""
-  );
-};
-
-const isAmbiguousDeploymentError = (error: unknown) =>
-  walletErrorMessage(error).includes("reading 'length'");
-
 const explorerCreations = async (
   owner: string,
 ): Promise<ExplorerCreation[]> => {
@@ -443,63 +428,46 @@ const findExistingEscrow = async (
   return undefined;
 };
 
-const recoverExpectedCreation = async (
-  provider: BrowserProvider,
-  owner: string,
-  expectedAddress: string,
-): Promise<RecoveredDeployment | undefined> => {
-  for (let attempt = 0; attempt < 45; attempt += 1) {
-    if ((await provider.getCode(expectedAddress)) !== "0x") {
-      for (
-        let explorerAttempt = 0;
-        explorerAttempt < 12;
-        explorerAttempt += 1
-      ) {
-        const creation = (await explorerCreations(owner)).find(
-          (transaction) =>
-            transaction.created_contract?.hash.toLowerCase() ===
-            expectedAddress.toLowerCase(),
-        );
-        if (creation) {
-          const validated = await validateCreation(provider, owner, creation);
-          if (validated) return validated;
-        }
-        await wait(1_000);
-      }
-      return undefined;
-    }
-    await wait(1_000);
-  }
-  return undefined;
-};
-
-const deployRecoverably = async (
+const deployViaCreate2 = async (
   provider: BrowserProvider,
   owner: string,
   factory: ContractFactory,
   args: readonly unknown[],
 ): Promise<RecoveredDeployment> => {
-  const nonce = await provider.getTransactionCount(owner, "pending");
-  const expectedAddress = getCreateAddress({ from: owner, nonce });
-  try {
-    const contract = await factory.deploy(...args);
-    const transaction = contract.deploymentTransaction();
-    if (!transaction) throw new Error("Contract deployment was not sent");
-    await contract.waitForDeployment();
-    return {
-      address: await contract.getAddress(),
-      transactionHash: transaction.hash,
-    };
-  } catch (error) {
-    if (!isAmbiguousDeploymentError(error)) throw error;
-    const recovered = await recoverExpectedCreation(
-      provider,
-      owner,
-      expectedAddress,
-    );
-    if (recovered) return recovered;
-    throw error;
+  const deployment = await factory.getDeployTransaction(...args);
+  if (typeof deployment.data !== "string") {
+    throw new Error("Contract deployment bytecode is unavailable");
   }
+  const initCodeHash = keccak256(deployment.data);
+  const salt = keccak256(
+    AbiCoder.defaultAbiCoder().encode(
+      ["address", "bytes32"],
+      [owner, initCodeHash],
+    ),
+  );
+  const expectedAddress = getCreate2Address(
+    CREATE2_DEPLOYER,
+    salt,
+    initCodeHash,
+  );
+  if ((await provider.getCode(expectedAddress)) !== "0x") {
+    throw new Error(
+      `The deterministic contract already exists at ${expectedAddress}; refresh the deal terms and retry.`,
+    );
+  }
+  const signer = await provider.getSigner(owner);
+  const transaction = await signer.sendTransaction({
+    to: CREATE2_DEPLOYER,
+    data: concat([salt, deployment.data]),
+  });
+  const receipt = await transaction.wait();
+  if (!receipt || receipt.status !== 1) {
+    throw new Error(`Contract deployment failed: ${transaction.hash}`);
+  }
+  if ((await provider.getCode(expectedAddress, receipt.blockNumber)) === "0x") {
+    throw new Error("CREATE2 deployer did not create the expected contract");
+  }
+  return { address: expectedAddress, transactionHash: transaction.hash };
 };
 
 const LOCAL_CHAIN = {
@@ -1028,7 +996,7 @@ export default function HomePage() {
     }
   };
 
-  const deployPublicTestnetDeal = async (address: string) => {
+  const deployPublicTestnetDeal = async () => {
     if (!state.network?.publicTestnet) {
       throw new Error("Public testnet mode is not active");
     }
@@ -1039,7 +1007,15 @@ export default function HomePage() {
       const injected = await resolveMetaMaskProvider();
       const provider = new BrowserProvider(injected);
       const signer = await provider.getSigner();
-      const balance = await provider.getBalance(address);
+      const buyerAddress = getAddress(await signer.getAddress());
+      const activeChainId = Number((await provider.getNetwork()).chainId);
+      if (activeChainId !== BASE_SEPOLIA_CHAIN_ID) {
+        throw new Error(
+          `MetaMask is on chain ${activeChainId}; switch to Base Sepolia (${BASE_SEPOLIA_CHAIN_ID}) and retry.`,
+        );
+      }
+      setWalletAddress(buyerAddress);
+      const balance = await provider.getBalance(buyerAddress);
       if (balance === 0n) {
         throw new Error(
           "Base Sepolia ETH is required for deployment. Fund this address from a Base Sepolia faucet first.",
@@ -1052,7 +1028,7 @@ export default function HomePage() {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             playerId: selectedPlayerId,
-            buyerAddress: address,
+            buyerAddress,
           }),
         }),
         fetch(`${API_BASE}/demo/artifacts`, { cache: "no-store" }),
@@ -1083,8 +1059,12 @@ export default function HomePage() {
             address: state.testToken.address,
             transactionHash: state.testToken.transactionHash,
           }
-        : ((await findExistingTestToken(provider, address, artifacts.token)) ??
-          (await deployRecoverably(provider, address, tokenFactory, [])));
+        : ((await findExistingTestToken(
+            provider,
+            buyerAddress,
+            artifacts.token,
+          )) ??
+          (await deployViaCreate2(provider, buyerAddress, tokenFactory, [])));
       const tokenAddress = tokenDeployment.address;
       const token = new Contract(tokenAddress, artifacts.token.abi, signer);
 
@@ -1109,7 +1089,7 @@ export default function HomePage() {
         ),
       );
       const dealId = id(
-        `laforza-${selectedPlayerId}-${address}-${latestBlock.timestamp}`,
+        `laforza-${selectedPlayerId}-${buyerAddress}-${latestBlock.timestamp}`,
       );
       const escrowFactory = new ContractFactory(
         artifacts.escrow.abi,
@@ -1118,7 +1098,7 @@ export default function HomePage() {
       );
       const escrowArguments = [
         tokenAddress,
-        address,
+        buyerAddress,
         prepared.participants.seller,
         prepared.participants.player,
         prepared.participants.verifier,
@@ -1130,9 +1110,9 @@ export default function HomePage() {
         [milestone],
       ] as const;
       const escrowDeployment =
-        (await findExistingEscrow(provider, address, artifacts.escrow, {
+        (await findExistingEscrow(provider, buyerAddress, artifacts.escrow, {
           token: tokenAddress,
-          buyer: address,
+          buyer: buyerAddress,
           seller: prepared.participants.seller,
           player: prepared.participants.player,
           verifier: prepared.participants.verifier,
@@ -1141,9 +1121,9 @@ export default function HomePage() {
           milestoneRoot,
           now: latestBlock.timestamp,
         })) ??
-        (await deployRecoverably(
+        (await deployViaCreate2(
           provider,
-          address,
+          buyerAddress,
           escrowFactory,
           escrowArguments,
         ));
@@ -1164,11 +1144,11 @@ export default function HomePage() {
 
       let mintTxHash: string | undefined;
       const buyerTokenBalance = (await token.getFunction("balanceOf")(
-        address,
+        buyerAddress,
       )) as bigint;
       if (buyerTokenBalance < TEST_USDT_FAUCET_AMOUNT) {
         const mint = await token.getFunction("mint")(
-          address,
+          buyerAddress,
           TEST_USDT_FAUCET_AMOUNT,
         );
         await mint.wait();
@@ -1180,7 +1160,7 @@ export default function HomePage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           playerId: selectedPlayerId,
-          buyerAddress: address,
+          buyerAddress,
           tokenAddress,
           escrowAddress,
           tokenDeployTxHash: tokenDeployment.transactionHash,
@@ -1195,7 +1175,7 @@ export default function HomePage() {
       }
       setState(result);
       setBackendOnline(true);
-      await refreshWallet(address, result);
+      await refreshWallet(buyerAddress, result);
     } catch (deploymentError) {
       setError(
         readableWalletError(
@@ -1213,7 +1193,7 @@ export default function HomePage() {
     if (!address) return;
     await switchToDemoNetwork();
     if (state.network?.publicTestnet) {
-      await deployPublicTestnetDeal(address);
+      await deployPublicTestnetDeal();
       return;
     }
     const result = await runAction("bootstrap", "bootstrap", {
@@ -1468,7 +1448,7 @@ export default function HomePage() {
       );
       const deployment =
         (await findExistingTestToken(provider, address, artifacts.token)) ??
-        (await deployRecoverably(provider, address, tokenFactory, []));
+        (await deployViaCreate2(provider, address, tokenFactory, []));
       const token = new Contract(deployment.address, erc20Abi, signer);
       const mint = await token.getFunction("mint")(
         address,
