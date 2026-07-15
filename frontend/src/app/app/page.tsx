@@ -12,6 +12,7 @@ import {
   type Eip1193Provider,
   type InterfaceAbi,
 } from "ethers";
+import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -801,7 +802,14 @@ export default function HomePage() {
     <main className="app-page">
       <nav className="nav">
         <Link className="brand" href="/">
-          <span className="brand-mark">LF</span>
+          <span className="brand-logo-mark">
+            <Image
+              alt="La Forza emblem"
+              height={96}
+              src="/images/laforza-logo.png"
+              width={96}
+            />
+          </span>
           <span>LA FORZA</span>
         </Link>
         <div className="nav-links">
@@ -826,6 +834,14 @@ export default function HomePage() {
       <section className="workspace" id="workspace">
         <aside className="workspace-tabs" aria-label="Application sections">
           <div className="workspace-title">
+            <Image
+              alt="La Forza — Deals. Trust. Future."
+              className="desk-brand-logo"
+              height={180}
+              priority
+              src="/images/laforza-logo.png"
+              width={180}
+            />
             <span>LF / OPS</span>
             <strong>Transfer desk</strong>
           </div>

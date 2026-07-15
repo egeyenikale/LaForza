@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 
 export default function LandingPage() {
@@ -5,7 +6,14 @@ export default function LandingPage() {
     <main className="landing-page">
       <nav className="nav landing-nav">
         <Link className="brand" href="/">
-          <span className="brand-mark">LF</span>
+          <span className="brand-logo-mark">
+            <Image
+              alt="La Forza emblem"
+              height={96}
+              src="/images/laforza-logo.png"
+              width={96}
+            />
+          </span>
           <span>LA FORZA</span>
         </Link>
         <div className="nav-links">
@@ -20,6 +28,15 @@ export default function LandingPage() {
 
       <section className="hero landing-hero">
         <div className="hero-shade" />
+        <div className="landing-logo-showcase" aria-hidden="true">
+          <Image
+            alt=""
+            fill
+            priority
+            sizes="(max-width: 980px) 0px, 42vw"
+            src="/images/laforza-logo.png"
+          />
+        </div>
         <div className="hero-content landing-hero-content">
           <div className="eyebrow">FOOTBALL OPERATIONS / TETHER WDK</div>
           <h1>

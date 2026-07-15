@@ -90,6 +90,23 @@ main {
   justify-content: center;
   width: 34px;
 }
+.brand-logo-mark {
+  background: #223033;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  display: inline-block;
+  height: 38px;
+  overflow: hidden;
+  position: relative;
+  width: 38px;
+}
+.brand-logo-mark img {
+  height: 96px;
+  left: -29px;
+  max-width: none;
+  position: absolute;
+  top: -19px;
+  width: 96px;
+}
 .nav-links {
   display: flex;
   font-size: 11px;
@@ -266,6 +283,12 @@ h1 em {
 }
 .workspace-title strong {
   font-size: 20px;
+}
+.desk-brand-logo {
+  border: 1px solid rgba(11, 14, 11, 0.22);
+  height: auto;
+  margin: -8px 0 14px;
+  width: 100%;
 }
 .workspace-tabs > button {
   background: transparent;
@@ -1303,6 +1326,31 @@ footer {
 .landing-hero {
   min-height: 880px;
 }
+.landing-logo-showcase {
+  filter: contrast(1.08) saturate(1.25);
+  height: min(54vw, 620px);
+  opacity: 0.82;
+  position: absolute;
+  right: clamp(-80px, 1vw, 30px);
+  top: 105px;
+  width: min(54vw, 620px);
+  z-index: 1;
+  -webkit-mask-image: radial-gradient(
+    ellipse at center,
+    #000 42%,
+    rgba(0, 0, 0, 0.76) 58%,
+    transparent 76%
+  );
+  mask-image: radial-gradient(
+    ellipse at center,
+    #000 42%,
+    rgba(0, 0, 0, 0.76) 58%,
+    transparent 76%
+  );
+}
+.landing-logo-showcase img {
+  object-fit: contain;
+}
 .landing-hero-content {
   padding-bottom: 105px;
 }
@@ -1482,6 +1530,9 @@ footer {
   .landing-section,
   .landing-control {
     grid-template-columns: 1fr;
+  }
+  .landing-logo-showcase {
+    display: none;
   }
 }
 
