@@ -6,33 +6,11 @@ const productionBackendOrigin = "https://la-forza-backend.vercel.app";
 function resolveBackendOrigin(): string {
   const configuredOrigin = process.env.BACKEND_API_ORIGIN?.replace(/\/$/, "");
 
-  if (process.env.VERCEL !== "1") {
-    return configuredOrigin ?? localBackendOrigin;
-  }
-
-  if (!configuredOrigin) {
+  if (process.env.NODE_ENV === "production") {
     return productionBackendOrigin;
   }
 
-  try {
-    const hostname = new URL(configuredOrigin).hostname.toLowerCase();
-    const isPrivateHostname =
-      hostname === "localhost" ||
-      hostname === "127.0.0.1" ||
-      hostname === "0.0.0.0" ||
-      hostname === "[::1]";
-    const isEphemeralBackendDeployment =
-      hostname.startsWith("la-forza-backend-") &&
-      hostname.endsWith(".vercel.app");
-
-    if (isPrivateHostname || isEphemeralBackendDeployment) {
-      return productionBackendOrigin;
-    }
-
-    return configuredOrigin;
-  } catch {
-    return productionBackendOrigin;
-  }
+  return configuredOrigin ?? localBackendOrigin;
 }
 
 const backendOrigin = resolveBackendOrigin();
