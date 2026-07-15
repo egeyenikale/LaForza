@@ -9,6 +9,7 @@ import {
   getAddress,
   getCreateAddress,
   id,
+  Interface,
   keccak256,
   parseEther,
   parseUnits,
@@ -20,6 +21,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/backend/api/v1";
+const TEST_USDT_UNIT = 1_000_000n;
+const TEST_USDT_FAUCET_AMOUNT = 50_000n * TEST_USDT_UNIT;
 
 type Tab = "overview" | "players" | "offers" | "deal" | "ledger" | "about";
 
@@ -393,6 +396,7 @@ const findExistingEscrow = async (
         milestoneRoot,
         fundingDeadline,
         funded,
+        signatureSchemeVersion,
       ] = await Promise.all([
         escrow.getFunction("token")(),
         escrow.getFunction("buyer")(),
@@ -404,6 +408,7 @@ const findExistingEscrow = async (
         escrow.getFunction("milestoneRoot")(),
         escrow.getFunction("fundingDeadline")(),
         escrow.getFunction("funded")(),
+        escrow.getFunction("SIGNATURE_SCHEME_VERSION")(),
       ]);
       const matches =
         String(token).toLowerCase() === expected.token.toLowerCase() &&
@@ -415,6 +420,7 @@ const findExistingEscrow = async (
         BigInt(signingBonus) === expected.signingBonus &&
         String(milestoneRoot) === expected.milestoneRoot &&
         BigInt(fundingDeadline) > BigInt(expected.now) &&
+        BigInt(signatureSchemeVersion) === 2n &&
         funded === false;
       if (!matches) continue;
       const validated = await validateCreation(provider, owner, creation);
@@ -505,7 +511,46 @@ const erc20Abi = [
 const escrowAbi = [
   "function fund(bytes buyerSignature, bytes sellerSignature, bytes playerSignature)",
   "function funded() view returns (bool)",
+  "function buyer() view returns (address)",
+  "function fundingDeadline() view returns (uint64)",
+  "function totalAmount() view returns (uint256)",
+  "function SIGNATURE_SCHEME_VERSION() view returns (uint8)",
+  "error AlreadyFunded()",
+  "error DealExpired()",
+  "error InvalidSignature(address expectedSigner)",
+  "error NotBuyer()",
 ] as const;
+
+const fundingRevertMessage = (error: unknown): string | undefined => {
+  const nested = error as {
+    data?: string;
+    error?: { data?: string };
+    info?: { error?: { data?: string | { data?: string } } };
+  };
+  const infoData = nested.info?.error?.data;
+  const data =
+    nested.data ??
+    nested.error?.data ??
+    (typeof infoData === "string" ? infoData : infoData?.data);
+  if (!data) return undefined;
+  try {
+    const parsed = new Interface(escrowAbi).parseError(data);
+    if (!parsed) return undefined;
+    if (parsed.name === "AlreadyFunded") return "This escrow is already funded";
+    if (parsed.name === "DealExpired") {
+      return "The funding deadline expired. Start a new deal to create a fresh escrow";
+    }
+    if (parsed.name === "NotBuyer") {
+      return "Only the MetaMask buyer that deployed this escrow can fund it";
+    }
+    if (parsed.name === "InvalidSignature") {
+      return `The escrow rejected the authorization signature for ${String(parsed.args[0])}`;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+};
 
 type ActionDefinition = {
   id: string;
@@ -1009,8 +1054,10 @@ export default function HomePage() {
 
       const latestBlock = await provider.getBlock("latest");
       if (!latestBlock) throw new Error("Could not read the testnet clock");
-      const fundingDeadline = BigInt(latestBlock.timestamp + 2 * 60 * 60);
-      const settlementDeadline = BigInt(latestBlock.timestamp + 24 * 60 * 60);
+      const fundingDeadline = BigInt(latestBlock.timestamp + 7 * 24 * 60 * 60);
+      const settlementDeadline = BigInt(
+        latestBlock.timestamp + 30 * 24 * 60 * 60,
+      );
       const milestone = {
         id: prepared.terms.milestoneId,
         threshold: 1n,
@@ -1083,10 +1130,10 @@ export default function HomePage() {
       const buyerTokenBalance = (await token.getFunction("balanceOf")(
         address,
       )) as bigint;
-      if (buyerTokenBalance < 2_000n * 1_000_000n) {
+      if (buyerTokenBalance < TEST_USDT_FAUCET_AMOUNT) {
         const mint = await token.getFunction("mint")(
           address,
-          2_000n * 1_000_000n,
+          TEST_USDT_FAUCET_AMOUNT,
         );
         await mint.wait();
         mintTxHash = mint.hash;
@@ -1223,37 +1270,129 @@ export default function HomePage() {
         );
       }
       const token = new Contract(state.contracts.token, erc20Abi, signer);
-      const approval = await token.getFunction("approve")(
-        state.contracts.escrow,
-        BigInt(state.deal.totalAmountMicroUsdt),
-      );
-      const approvalReceipt = await approval.wait();
-      if (!approvalReceipt) throw new Error("Token approval was not mined");
-
       const escrow = new Contract(state.contracts.escrow, escrowAbi, signer);
-      const funding = await escrow.getFunction("fund")(
+      const requiredAmount = BigInt(state.deal.totalAmountMicroUsdt);
+      const latestBlock = await provider.getBlock("latest");
+      if (!latestBlock)
+        throw new Error("Could not read the Base Sepolia clock");
+      let signatureVersion: bigint;
+      try {
+        signatureVersion = (await escrow.getFunction(
+          "SIGNATURE_SCHEME_VERSION",
+        )()) as bigint;
+      } catch {
+        throw new Error(
+          "This escrow was created before MetaMask EIP-7702 support. Open Players and start the deal again once; La Forza will deploy the corrected escrow.",
+        );
+      }
+      const [alreadyFunded, contractBuyer, fundingDeadline] = await Promise.all(
+        [
+          escrow.getFunction("funded")() as Promise<boolean>,
+          escrow.getFunction("buyer")() as Promise<string>,
+          escrow.getFunction("fundingDeadline")() as Promise<bigint>,
+        ],
+      );
+      if (BigInt(signatureVersion) !== 2n) {
+        throw new Error(
+          "This escrow was created before MetaMask EIP-7702 support. Start a new deal once; La Forza will deploy the corrected escrow.",
+        );
+      }
+      if (contractBuyer.toLowerCase() !== signerAddress.toLowerCase()) {
+        throw new Error(
+          "Only the MetaMask buyer that created this deal can fund it",
+        );
+      }
+
+      const recordFunding = async (
+        approvalTxHash?: string,
+        fundingTxHash?: string,
+      ) => {
+        const response = await fetch(`${API_BASE}/demo/fund/metamask`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            ...(approvalTxHash ? { approvalTxHash } : {}),
+            ...(fundingTxHash ? { fundingTxHash } : {}),
+          }),
+        });
+        const result = (await response.json()) as DemoState & {
+          error?: string;
+        };
+        if (!response.ok) {
+          throw new Error(result.error ?? "Funding proof rejected");
+        }
+        setState(result);
+        await refreshWallet(signerAddress, result);
+      };
+
+      if (alreadyFunded) {
+        await recordFunding();
+        return;
+      }
+      if (BigInt(latestBlock.timestamp) > BigInt(fundingDeadline)) {
+        throw new Error(
+          "The funding deadline expired. Start a new deal to create a fresh escrow.",
+        );
+      }
+
+      const [buyerBalance, currentAllowance] = (await Promise.all([
+        token.getFunction("balanceOf")(signerAddress),
+        token.getFunction("allowance")(signerAddress, state.contracts.escrow),
+      ])) as [bigint, bigint];
+      if (buyerBalance < requiredAmount) {
+        throw new Error(
+          `Insufficient test USD₮. This deal needs ${usdt(requiredAmount.toString())}; use the 50,000 test USD₮ faucet first.`,
+        );
+      }
+
+      let approvalTxHash: string | undefined;
+      if (currentAllowance < requiredAmount) {
+        const approval = await token.getFunction("approve")(
+          state.contracts.escrow,
+          requiredAmount,
+        );
+        const approvalReceipt = await approval.wait();
+        if (!approvalReceipt) throw new Error("Token approval was not mined");
+        approvalTxHash = approval.hash;
+      }
+
+      const fundingArguments = [
         state.execution.buyerSignature,
         state.execution.sellerSignature,
         state.execution.playerSignature,
-      );
-      const fundingReceipt = await funding.wait();
-      if (!fundingReceipt) throw new Error("Escrow funding was not mined");
+      ] as const;
+      try {
+        await escrow.getFunction("fund").staticCall(...fundingArguments);
+      } catch (preflightError) {
+        throw new Error(
+          fundingRevertMessage(preflightError) ??
+            readableWalletError(
+              preflightError,
+              "Escrow funding preflight failed",
+            ),
+        );
+      }
 
-      const response = await fetch(`${API_BASE}/demo/fund/metamask`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          approvalTxHash: approval.hash,
-          fundingTxHash: funding.hash,
-        }),
-      });
-      const result = (await response.json()) as DemoState & { error?: string };
-      if (!response.ok)
-        throw new Error(result.error ?? "Funding proof rejected");
-      setState(result);
-      await refreshWallet(signerAddress, result);
+      try {
+        const funding = await escrow.getFunction("fund")(...fundingArguments, {
+          gasLimit: 650_000n,
+        });
+        const fundingReceipt = await funding.wait();
+        if (!fundingReceipt) throw new Error("Escrow funding was not mined");
+        await recordFunding(approvalTxHash, funding.hash);
+      } catch (broadcastError) {
+        await wait(2_500);
+        if ((await escrow.getFunction("funded")()) === true) {
+          await recordFunding(approvalTxHash);
+          return;
+        }
+        throw broadcastError;
+      }
     } catch (fundingError) {
-      setError(readableWalletError(fundingError, "MetaMask funding failed"));
+      setError(
+        fundingRevertMessage(fundingError) ??
+          readableWalletError(fundingError, "MetaMask funding failed"),
+      );
     } finally {
       setBusy(null);
     }
@@ -1274,7 +1413,7 @@ export default function HomePage() {
       const token = new Contract(state.contracts.token, erc20Abi, signer);
       const transaction = await token.getFunction("mint")(
         walletAddress,
-        500n * 1_000_000n,
+        TEST_USDT_FAUCET_AMOUNT,
       );
       await transaction.wait();
       await refreshWallet(walletAddress);
@@ -1568,7 +1707,7 @@ function WalletDock(props: {
             onClick={props.onFaucet}
             disabled={!props.tokenAddress || props.busy !== null}
           >
-            {props.busy === "faucet" ? "Minting…" : "+ 500 test USD₮"}
+            {props.busy === "faucet" ? "Minting…" : "+ 50,000 test USD₮"}
           </button>
         )}
         <small className={props.backendOnline ? "ok" : "warn"}>

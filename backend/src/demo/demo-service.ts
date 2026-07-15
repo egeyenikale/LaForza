@@ -406,6 +406,7 @@ export class DemoService {
       fundingDeadline,
       settlementDeadline,
       contractDigest,
+      signatureSchemeVersion,
     ] = await Promise.all([
       this.#provider.getCode(tokenAddress),
       this.#provider.getCode(escrowAddress),
@@ -422,6 +423,7 @@ export class DemoService {
       escrow.getFunction("fundingDeadline")(),
       escrow.getFunction("settlementDeadline")(),
       escrow.getFunction("authorizationDigest")(),
+      escrow.getFunction("SIGNATURE_SCHEME_VERSION")(),
     ]);
     if (tokenCode === "0x" || escrowCode === "0x") {
       throw new Error("Public testnet contracts were not found");
@@ -431,6 +433,11 @@ export class DemoService {
     }
     if (BigInt(tokenDecimals) !== 6n) {
       throw new Error("Test USDt must use six decimals");
+    }
+    if (BigInt(signatureSchemeVersion) !== 2n) {
+      throw new Error(
+        "This escrow predates EIP-7702 signature support; deploy a new La Forza deal",
+      );
     }
     const addressChecks = [
       [String(contractToken), tokenAddress, "token"],
@@ -610,8 +617,8 @@ export class DemoService {
     const tokenAddress = await token.getAddress();
 
     const now = Math.floor(Date.now() / 1000);
-    const fundingDeadline = BigInt(now + 2 * 60 * 60);
-    const settlementDeadline = BigInt(now + 24 * 60 * 60);
+    const fundingDeadline = BigInt(now + 7 * 24 * 60 * 60);
+    const settlementDeadline = BigInt(now + 30 * 24 * 60 * 60);
     const milestone: DealMilestoneAuthorization = {
       id: id("appearance-1"),
       threshold: 1n,
@@ -646,7 +653,7 @@ export class DemoService {
       });
       await funding.wait();
     }
-    const mint = await token.getFunction("mint")(buyer, 2_000n * USDT);
+    const mint = await token.getFunction("mint")(buyer, 50_000n * USDT);
     await mint.wait();
 
     const envelope: DealAuthorizationEnvelope = {
@@ -935,34 +942,39 @@ export class DemoService {
   }
 
   async recordMetamaskFunding(
-    approvalTxHash: string,
-    fundingTxHash: string,
+    approvalTxHash?: string,
+    fundingTxHash?: string,
   ): Promise<Record<string, unknown>> {
     const runtime = await this.#requireRuntime();
     if (runtime.custodyMode !== "METAMASK") {
       throw new Error("This deal is not controlled by MetaMask");
     }
-    const approvalReceipt = await this.#wait(approvalTxHash);
-    const fundingReceipt = await this.#wait(fundingTxHash);
-    if (
-      approvalReceipt.from.toLowerCase() !== runtime.buyerAddress.toLowerCase()
-    ) {
-      throw new Error("Approval transaction was not sent by the buyer");
+    if (approvalTxHash) {
+      const approvalReceipt = await this.#wait(approvalTxHash);
+      if (
+        approvalReceipt.from.toLowerCase() !==
+        runtime.buyerAddress.toLowerCase()
+      ) {
+        throw new Error("Approval transaction was not sent by the buyer");
+      }
+      if (
+        approvalReceipt.to?.toLowerCase() !== runtime.tokenAddress.toLowerCase()
+      ) {
+        throw new Error("Approval transaction does not target test USDt");
+      }
     }
-    if (
-      fundingReceipt.from.toLowerCase() !== runtime.buyerAddress.toLowerCase()
-    ) {
-      throw new Error("Funding transaction was not sent by the buyer");
-    }
-    if (
-      approvalReceipt.to?.toLowerCase() !== runtime.tokenAddress.toLowerCase()
-    ) {
-      throw new Error("Approval transaction does not target test USDt");
-    }
-    if (
-      fundingReceipt.to?.toLowerCase() !== runtime.escrowAddress.toLowerCase()
-    ) {
-      throw new Error("Funding transaction does not target this escrow");
+    if (fundingTxHash) {
+      const fundingReceipt = await this.#wait(fundingTxHash);
+      if (
+        fundingReceipt.from.toLowerCase() !== runtime.buyerAddress.toLowerCase()
+      ) {
+        throw new Error("Funding transaction was not sent by the buyer");
+      }
+      if (
+        fundingReceipt.to?.toLowerCase() !== runtime.escrowAddress.toLowerCase()
+      ) {
+        throw new Error("Funding transaction does not target this escrow");
+      }
     }
     const escrowArtifact = await this.#readArtifact(
       "contracts/DeadlineEscrow.sol/DeadlineEscrow.json",
@@ -975,13 +987,13 @@ export class DemoService {
     if (!(await escrow.getFunction("funded")())) {
       throw new Error("Escrow is not funded on-chain");
     }
-    runtime.transactions.approval = approvalTxHash;
-    runtime.transactions.funding = fundingTxHash;
+    if (approvalTxHash) runtime.transactions.approval = approvalTxHash;
+    if (fundingTxHash) runtime.transactions.funding = fundingTxHash;
     this.#updateAcceptedOffer(runtime, "FUNDED");
     await this.#persistRuntime(runtime);
     await this.#events.append("ESCROW_FUNDED", {
-      approveTxHash: approvalTxHash,
-      fundingTxHash,
+      ...(approvalTxHash ? { approveTxHash: approvalTxHash } : {}),
+      ...(fundingTxHash ? { fundingTxHash } : {}),
       buyer: runtime.buyerAddress,
       wallet: "MetaMask / EIP-1193",
       signingBonusMicroUsdt: jsonBigInt(SIGNING_BONUS),

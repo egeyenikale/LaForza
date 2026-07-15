@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
@@ -30,6 +31,7 @@ contract DeadlineEscrow is EIP712, ReentrancyGuard {
     bytes32 public constant AUTHORIZATION_TYPEHASH = keccak256(
         "DealAuthorization(bytes32 dealId,address buyer,address seller,address player,address token,uint256 totalAmount,uint256 signingBonus,bytes32 milestoneRoot,uint64 fundingDeadline,uint64 settlementDeadline)"
     );
+    uint8 public constant SIGNATURE_SCHEME_VERSION = 2;
 
     IERC20 public immutable token;
     address public immutable buyer;
@@ -162,13 +164,13 @@ contract DeadlineEscrow is EIP712, ReentrancyGuard {
         if (block.timestamp > fundingDeadline) revert DealExpired();
 
         bytes32 digest = authorizationDigest();
-        if (!SignatureChecker.isValidSignatureNow(buyer, digest, buyerSignature)) {
+        if (!_isValidSigner(buyer, digest, buyerSignature)) {
             revert InvalidSignature(buyer);
         }
-        if (!SignatureChecker.isValidSignatureNow(seller, digest, sellerSignature)) {
+        if (!_isValidSigner(seller, digest, sellerSignature)) {
             revert InvalidSignature(seller);
         }
-        if (!SignatureChecker.isValidSignatureNow(player, digest, playerSignature)) {
+        if (!_isValidSigner(player, digest, playerSignature)) {
             revert InvalidSignature(player);
         }
 
@@ -229,5 +231,19 @@ contract DeadlineEscrow is EIP712, ReentrancyGuard {
 
     function milestoneIdAt(uint256 index) external view returns (bytes32) {
         return _milestoneIds[index];
+    }
+
+    /// @dev EIP-7702 accounts have code but still sign with their controlling EOA key.
+    /// Try canonical ECDSA first, then fall back to ERC-1271 contract-wallet checks.
+    function _isValidSigner(address expectedSigner, bytes32 digest, bytes calldata signature)
+        private
+        view
+        returns (bool)
+    {
+        (address recovered, ECDSA.RecoverError error,) = ECDSA.tryRecover(digest, signature);
+        if (error == ECDSA.RecoverError.NoError && recovered == expectedSigner) {
+            return true;
+        }
+        return SignatureChecker.isValidSignatureNow(expectedSigner, digest, signature);
     }
 }

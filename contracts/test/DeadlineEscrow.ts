@@ -155,6 +155,41 @@ describe("DeadlineEscrow", function () {
     expect(await fixture.escrow.remainingAmount()).to.equal(0n);
   });
 
+  it("accepts the controlling ECDSA signature from a code-bearing EIP-7702-style buyer", async function () {
+    const fixture = await deployFixture();
+    const signatures = await Promise.all(
+      [fixture.buyer, fixture.seller, fixture.player].map((signer) =>
+        signer.signTypedData(
+          fixture.domain,
+          dealAuthorizationTypes,
+          fixture.message,
+        ),
+      ),
+    );
+
+    await ethers.provider.send("hardhat_setCode", [
+      fixture.buyer.address,
+      "0x60006000f3",
+    ]);
+    try {
+      await fixture.token.mint(fixture.buyer.address, fixture.totalAmount);
+      await fixture.token
+        .connect(fixture.buyer)
+        .approve(await fixture.escrow.getAddress(), fixture.totalAmount);
+
+      await expect(
+        fixture.escrow
+          .connect(fixture.buyer)
+          .fund(signatures[0]!, signatures[1]!, signatures[2]!),
+      ).to.emit(fixture.escrow, "DealFunded");
+    } finally {
+      await ethers.provider.send("hardhat_setCode", [
+        fixture.buyer.address,
+        "0x",
+      ]);
+    }
+  });
+
   it("rejects a signature that does not belong to the required player", async function () {
     const fixture = await deployFixture();
     const buyerSignature = await fixture.buyer.signTypedData(

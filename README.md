@@ -27,7 +27,7 @@ the Transfer Desk; it does not repeat the grass landing hero. The command starts
 
 The application requires the MetaMask browser extension. It adds/switches to the
 local EVM chain (`31337`) through the standard EIP-1193 prompt. The connected
-address becomes the escrow buyer and receives local test ETH plus 2,000 test
+address becomes the escrow buyer and receives local test ETH plus 50,000 test
 USD₮ when a deal is deployed.
 
 ### Public Base Sepolia mode
@@ -38,7 +38,7 @@ npm run demo:testnet
 
 This starts Fastify and Next.js against the official Base Sepolia RPC (chain
 `84532`). The connected MetaMask account deploys both `MockUSDT` and
-`DeadlineEscrow`, funds the WDK verifier with test gas, and mints 2,000
+`DeadlineEscrow`, funds the WDK verifier with test gas, and mints 50,000
 six-decimal La Forza test USD₮. Contract and transaction links open on the Base
 Sepolia explorer. The account must already hold Base Sepolia ETH from a faucet.
 No deployer private key is requested or stored by La Forza.

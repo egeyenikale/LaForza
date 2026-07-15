@@ -25,8 +25,14 @@ const metamaskSignatureSchema = z.object({
 });
 
 const metamaskFundingSchema = z.object({
-  approvalTxHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/),
-  fundingTxHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/),
+  approvalTxHash: z
+    .string()
+    .regex(/^0x[a-fA-F0-9]{64}$/)
+    .optional(),
+  fundingTxHash: z
+    .string()
+    .regex(/^0x[a-fA-F0-9]{64}$/)
+    .optional(),
 });
 
 const addressSchema = z.string().regex(/^0x[a-fA-F0-9]{40}$/);

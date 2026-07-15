@@ -12,7 +12,7 @@ Approve the prompt to add/switch to **LaForza Local EVM** (`31337`). Enter the
 **Players** tab, choose a player, and select **Start this deal**. The WDK vault
 passphrase is an operator-side environment setting and is not shown to football
 users. The connected address becomes the buyer and receives local test gas plus
-2,000 six-decimal test USD₮.
+50,000 six-decimal test USD₮.
 
 For public explorer-verifiable records, start with `npm run demo:testnet`
 instead. MetaMask switches to Base Sepolia (`84532`) and the connected account
@@ -34,7 +34,8 @@ public explorer.
 
 The connected account, chain, test ETH, test USD₮, audit trail, actor balances,
 contract addresses, authorization digest, and all three write transaction
-hashes are visible on the page. The local faucet can mint another 500 test USD₮.
+hashes are visible on the page. The faucet mints another 50,000 test USD₮ per
+request so multi-wallet testers do not need repeated small mints.
 
 The **Offers** tab preserves the initial club ask, the policy-rejected proposal,
 and the active 900 test USD₮ counter as separate commercial records. Its state
