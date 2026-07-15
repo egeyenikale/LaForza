@@ -5,8 +5,7 @@ import {
   type DealAuthorizationEnvelope,
   type DealMilestoneAuthorization,
 } from "@laforza/protocol";
-import WDK, { type Policy } from "@tetherto/wdk";
-import WalletManagerEvm from "@tetherto/wdk-wallet-evm";
+import type { Policy } from "@tetherto/wdk";
 import {
   Contract,
   ContractFactory,
@@ -27,7 +26,6 @@ import {
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { WdkDealAgent } from "../agents/wdk-deal-agent.js";
 import type { AppConfig } from "../config.js";
 import { EventStore } from "../events/event-store.js";
 import {
@@ -49,6 +47,13 @@ const SIGNING_BONUS = 250n * USDT;
 const MILESTONE_AMOUNT = 650n * USDT;
 const BUYER_MAXIMUM = 1_000n * USDT;
 const HUMAN_APPROVAL_THRESHOLD = 750n * USDT;
+const BASE_SEPOLIA_TEST_TOKEN: TestTokenRecord = {
+  address: "0xEb1A4eee8C8E7f0429e1F0A2AC33584D0A6124b4",
+  deployer: "0x63e7DFb5e96f3e3911110511A89Ea072Cd2c0030",
+  transactionHash:
+    "0xb2a8829e5f5eefe727075f88cd8a642d0c765ef8a2dde45b3c9615f64936947c",
+  createdAt: "2026-07-15T01:11:52.000Z",
+};
 
 type Artifact = {
   abi: InterfaceAbi;
@@ -150,6 +155,19 @@ type EvmWdkAccount = {
     data: string;
   }): Promise<{ hash: string }>;
 };
+
+async function loadWdkRuntime() {
+  const [{ default: WDK }, { default: WalletManagerEvm }] = await Promise.all([
+    import("@tetherto/wdk"),
+    import("@tetherto/wdk-wallet-evm"),
+  ]);
+  return { WDK, WalletManagerEvm };
+}
+
+async function loadWdkDealAgent() {
+  const { WdkDealAgent } = await import("../agents/wdk-deal-agent.js");
+  return WdkDealAgent;
+}
 
 function roleAddress(wallets: PublicWallet[], role: WalletRole): string {
   const wallet = wallets.find((candidate) => candidate.role === role);
@@ -942,14 +960,15 @@ export class DemoService {
     const runtime = await this.#requireRuntime();
     const counterparty = runtime.buyerAddress;
     const policy = this.#partyPolicy(counterparty, runtime.envelope);
-    const result = await this.#vault.withSeed(role, passkey, (seed) =>
-      new WdkDealAgent(seed).evaluateAuthorization({
+    const result = await this.#vault.withSeed(role, passkey, async (seed) => {
+      const WdkDealAgent = await loadWdkDealAgent();
+      return new WdkDealAgent(seed).evaluateAuthorization({
         policy,
         envelope: runtime.envelope,
         counterparty,
         sign: true,
-      }),
-    );
+      });
+    });
     if (!result.signature)
       throw new Error(`${role} authorization was not signed`);
     runtime.signatures[role] = result.signature;
@@ -982,6 +1001,7 @@ export class DemoService {
       "BUYER",
       passkey,
       async (seed) => {
+        const { WDK, WalletManagerEvm } = await loadWdkRuntime();
         const approvalWdk = new WDK(seed)
           .registerWallet("evm", WalletManagerEvm, {
             provider: this.config.CHAIN_RPC_URL,
@@ -1116,6 +1136,7 @@ export class DemoService {
       "VERIFIER",
       passkey,
       async (seed) => {
+        const { WDK, WalletManagerEvm } = await loadWdkRuntime();
         const wdk = new WDK(seed)
           .registerWallet("evm", WalletManagerEvm, {
             provider: this.config.CHAIN_RPC_URL,
@@ -1270,15 +1291,16 @@ export class DemoService {
   ) {
     const runtime = await this.#requireRuntime();
     const counterparty = roleAddress(runtime.wallets, "SELLER");
-    return this.#vault.withSeed("BUYER", passkey, (seed) =>
-      new WdkDealAgent(seed).evaluateAuthorization({
+    return this.#vault.withSeed("BUYER", passkey, async (seed) => {
+      const WdkDealAgent = await loadWdkDealAgent();
+      return new WdkDealAgent(seed).evaluateAuthorization({
         policy: this.#buyerPolicy(counterparty, runtime.envelope),
         envelope,
         counterparty,
         ...(humanApprovedDigest ? { humanApprovedDigest } : {}),
         sign,
-      }),
-    );
+      });
+    });
   }
 
   #buyerPolicy(
@@ -1431,7 +1453,10 @@ export class DemoService {
 
   async #loadTestToken(): Promise<TestTokenRecord | undefined> {
     const content = await this.#storage.read("test-token");
-    return content ? (JSON.parse(content) as TestTokenRecord) : undefined;
+    if (content) return JSON.parse(content) as TestTokenRecord;
+    return this.config.CHAIN_ID === 84532
+      ? BASE_SEPOLIA_TEST_TOKEN
+      : undefined;
   }
 
   async #persistRuntime(runtime: DemoRuntime): Promise<void> {

@@ -23,6 +23,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/backend/api/v1";
 const TEST_USDT_UNIT = 1_000_000n;
 const TEST_USDT_FAUCET_AMOUNT = 50_000n * TEST_USDT_UNIT;
+const BASE_SEPOLIA_CHAIN_ID = 84532;
+const BASE_SEPOLIA_TEST_TOKEN =
+  "0xEb1A4eee8C8E7f0429e1F0A2AC33584D0A6124b4";
 
 type Tab = "overview" | "players" | "offers" | "deal" | "ledger" | "about";
 
@@ -729,7 +732,12 @@ export default function HomePage() {
   const [walletChainId, setWalletChainId] = useState<number | null>(null);
   const [walletEth, setWalletEth] = useState("0");
   const [walletUsdt, setWalletUsdt] = useState("0");
-  const tokenAddress = state.contracts?.token ?? state.testToken?.address;
+  const tokenAddress =
+    state.contracts?.token ??
+    state.testToken?.address ??
+    (walletChainId === BASE_SEPOLIA_CHAIN_ID
+      ? BASE_SEPOLIA_TEST_TOKEN
+      : undefined);
 
   const loadState = useCallback(async () => {
     try {
@@ -764,7 +772,11 @@ export default function HomePage() {
       setWalletEth(Number(formatEther(balance)).toFixed(3));
       setWalletChainId(Number(network.chainId));
       const nextTokenAddress =
-        nextState.contracts?.token ?? nextState.testToken?.address;
+        nextState.contracts?.token ??
+        nextState.testToken?.address ??
+        (Number(network.chainId) === BASE_SEPOLIA_CHAIN_ID
+          ? BASE_SEPOLIA_TEST_TOKEN
+          : undefined);
       if (nextTokenAddress) {
         const token = new Contract(nextTokenAddress, erc20Abi, provider);
         const tokenBalance = (await token.getFunction("balanceOf")(

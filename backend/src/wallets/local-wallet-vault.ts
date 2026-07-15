@@ -1,5 +1,3 @@
-import WDK from "@tetherto/wdk";
-import WalletManagerEvm from "@tetherto/wdk-wallet-evm";
 import {
   createCipheriv,
   createDecipheriv,
@@ -43,7 +41,16 @@ async function deriveKey(passkey: string, salt: Buffer): Promise<Buffer> {
   return (await scrypt(passkey, salt, 32)) as Buffer;
 }
 
+async function loadWdkRuntime() {
+  const [{ default: WDK }, { default: WalletManagerEvm }] = await Promise.all([
+    import("@tetherto/wdk"),
+    import("@tetherto/wdk-wallet-evm"),
+  ]);
+  return { WDK, WalletManagerEvm };
+}
+
 async function addressFromSeed(seedPhrase: string): Promise<string> {
+  const { WDK, WalletManagerEvm } = await loadWdkRuntime();
   const wdk = new WDK(seedPhrase).registerWallet("evm", WalletManagerEvm, {});
   try {
     const account = await wdk.getAccount("evm", 0);
@@ -68,6 +75,7 @@ export class LocalWalletVault {
     return this.storage.withLock(this.key, async () => {
       if (await this.exists()) return this.list(passkey);
 
+      const { WDK } = await loadWdkRuntime();
       const wallets: EncryptedWallet[] = [];
       for (const role of walletRoles) {
         const seedPhrase = WDK.getRandomSeedPhrase(24);

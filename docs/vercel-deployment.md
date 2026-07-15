@@ -78,9 +78,10 @@ wallet must have Base Sepolia ETH before it can deploy the test token and escrow
 Do not configure a deployer private key in either Vercel project. Contract
 deployment deliberately happens from the connected buyer's MetaMask account:
 
-1. MetaMask deploys the six-decimal `MockUSDT` contract on Base Sepolia. This
-   can happen directly from the wallet dock before a deal exists. The backend
-   validates the receipts and persists the shared token address in Redis.
+1. La Forza reuses its shared six-decimal `MockUSDT` deployment at
+   `0xEb1A4eee8C8E7f0429e1F0A2AC33584D0A6124b4` on Base Sepolia. The connected
+   wallet never needs to deploy another token contract; the wallet dock calls
+   the public test faucet directly and can import this address into MetaMask.
 2. MetaMask deploys the versioned `DeadlineEscrow` for the selected player and
    exact buyer, seller, player, verifier, amount, and deadlines.
 3. The faucet calls the token's on-chain `mint` function. The minted balance is
@@ -101,7 +102,7 @@ production-value deployment.
 2. `/app` loads the six-player catalog.
 3. A second MetaMask wallet can register as a club/tester and submit a signed
    offer; refresh the page and confirm the offer remains.
-4. The buyer wallet deploys/reuses test USDt and `DeadlineEscrow`.
+4. The buyer wallet mints/reuses shared test USDt and deploys `DeadlineEscrow`.
 5. Refresh or wait for a backend cold start; the active deal must still load.
 6. Complete signatures, approve/fund, and release the milestone; verify every
    transaction in the Base Sepolia explorer.
