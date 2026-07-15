@@ -1425,6 +1425,39 @@ export default function HomePage() {
     }
   };
 
+  const addTestUsdtToMetaMask = async () => {
+    if (!state.contracts?.token) {
+      setError("Deploy a deal before adding its test token to MetaMask");
+      return;
+    }
+    setBusy("token-import");
+    setError(null);
+    try {
+      await switchToDemoNetwork();
+      const injected = await resolveMetaMaskProvider();
+      const accepted = await injected.request({
+        method: "wallet_watchAsset",
+        params: {
+          type: "ERC20",
+          options: {
+            address: state.contracts.token,
+            symbol: "USDT",
+            decimals: 6,
+          },
+        },
+      });
+      if (accepted === false) {
+        throw new Error("MetaMask token import was cancelled");
+      }
+    } catch (tokenImportError) {
+      setError(
+        readableWalletError(tokenImportError, "MetaMask token import failed"),
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const goTo = (tab: Tab) => {
     setActiveTab(tab);
     window.setTimeout(
@@ -1530,6 +1563,7 @@ export default function HomePage() {
             onConnect={() => void connectWallet()}
             onSwitch={() => void switchToDemoNetwork()}
             onFaucet={() => void mintTestUsdt()}
+            onImportToken={() => void addTestUsdtToMetaMask()}
           />
           {activeTab === "overview" && (
             <Overview state={state} completed={completed} onNavigate={goTo} />
@@ -1637,6 +1671,7 @@ function WalletDock(props: {
   onConnect: () => void;
   onSwitch: () => void;
   onFaucet: () => void;
+  onImportToken: () => void;
 }) {
   const correctNetwork = props.chainId === props.expectedChainId;
   const correctBuyer =
@@ -1702,13 +1737,23 @@ function WalletDock(props: {
         ) : !correctNetwork ? (
           <button onClick={props.onSwitch}>Switch network</button>
         ) : (
-          <button
-            className="secondary"
-            onClick={props.onFaucet}
-            disabled={!props.tokenAddress || props.busy !== null}
-          >
-            {props.busy === "faucet" ? "Minting…" : "+ 50,000 test USD₮"}
-          </button>
+          <div className="wallet-action-buttons">
+            <button
+              className="secondary"
+              onClick={props.onFaucet}
+              disabled={!props.tokenAddress || props.busy !== null}
+            >
+              {props.busy === "faucet" ? "Minting…" : "+ 50,000 test USD₮"}
+            </button>
+            <button
+              onClick={props.onImportToken}
+              disabled={!props.tokenAddress || props.busy !== null}
+            >
+              {props.busy === "token-import"
+                ? "Adding token…"
+                : "Add token to MetaMask"}
+            </button>
+          </div>
         )}
         <small className={props.backendOnline ? "ok" : "warn"}>
           {props.backendOnline

@@ -1617,6 +1617,10 @@ footer {
 .wallet-dock-actions {
   justify-content: center;
 }
+.wallet-action-buttons {
+  display: grid;
+  gap: 6px;
+}
 .wallet-dock-actions button {
   background: var(--green);
   border: 0;
