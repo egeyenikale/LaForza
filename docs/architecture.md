@@ -37,6 +37,8 @@ La Forza proves one narrow flow end to end:
 - The frontend never receives a seed phrase or private key.
 - WDK BIP-39 phrases are encrypted with passkey-derived scrypt keys and
   AES-256-GCM. Only addresses, salts, IVs, tags, and ciphertext are persisted.
+- The vault passphrase is an operator-side `WDK_VAULT_PASSPHRASE` setting. It
+  is not a football-user form field and is never displayed in the frontend.
 - The MetaMask private key never enters La Forza; the browser requests accounts,
   typed-data signatures, token approval, and escrow funding via EIP-1193.
 - Human approval is bound to the exact authorization digest, not merely an
@@ -86,3 +88,10 @@ mints demo USD₮; the backend adopts the deal only after independently reading
 the contract actors, amounts, milestone root, deadlines, authorization digest,
 deployment receipts, mint receipt, and verifier funding receipt from the public
 chain. No external deployer key is required.
+
+Deployment recovery is idempotent. Existing token and escrow deployments are
+reused after wallet/RPC ambiguity; verifier gas and test-token minting are
+skipped when their on-chain balances are already sufficient. Contract creation
+receipts must originate from the buyer, while funding and mint operations are
+validated by their own targets and resulting balances so EIP-7702 wallet
+execution is not misclassified as contract deployment.

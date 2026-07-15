@@ -9,7 +9,7 @@ import type {
 } from "../demo/demo-service.js";
 
 const passkeySchema = z.object({
-  passkey: z.string().min(12).max(200),
+  passkey: z.string().min(12).max(200).optional(),
 });
 
 const bootstrapSchema = passkeySchema.extend({
@@ -61,13 +61,15 @@ const externalDeploymentSchema = passkeySchema.extend({
   escrowAddress: addressSchema,
   tokenDeployTxHash: transactionHashSchema,
   escrowDeployTxHash: transactionHashSchema,
-  verifierFundingTxHash: transactionHashSchema,
-  mintTxHash: transactionHashSchema,
+  verifierFundingTxHash: transactionHashSchema.optional(),
+  mintTxHash: transactionHashSchema.optional(),
 });
 
 export const registerDemoRoutes: FastifyPluginAsync<{
   demoService: DemoService;
 }> = async (app, { demoService }) => {
+  const vaultPassphrase = (input?: string) =>
+    input ?? demoService.operatorVaultPassphrase();
   app.get("/demo/state", async () => demoService.state());
   app.get("/demo/players", async () => ({ players: demoService.players() }));
   app.get("/demo/artifacts", async () => demoService.artifacts());
@@ -111,7 +113,7 @@ export const registerDemoRoutes: FastifyPluginAsync<{
     if (!parsed.success) return reply.code(400).send(parsed.error.flatten());
     try {
       return await demoService.participants(
-        parsed.data.passkey,
+        vaultPassphrase(parsed.data.passkey),
         parsed.data.playerId,
       );
     } catch (error) {
@@ -131,7 +133,7 @@ export const registerDemoRoutes: FastifyPluginAsync<{
     try {
       const { passkey, ...deployment } = parsed.data;
       return await demoService.adoptExternalDeployment(
-        passkey,
+        vaultPassphrase(passkey),
         deployment as ExternalDeploymentInput,
       );
     } catch (error) {
@@ -150,7 +152,7 @@ export const registerDemoRoutes: FastifyPluginAsync<{
     if (!parsed.success) return reply.code(400).send(parsed.error.flatten());
     try {
       return await demoService.bootstrap(
-        parsed.data.passkey,
+        vaultPassphrase(parsed.data.passkey),
         parsed.data.playerId,
         parsed.data.buyerAddress,
       );
@@ -170,7 +172,7 @@ export const registerDemoRoutes: FastifyPluginAsync<{
       const parsed = passkeySchema.safeParse(request.body);
       if (!parsed.success) return reply.code(400).send(parsed.error.flatten());
       try {
-        return await handler(parsed.data.passkey);
+        return await handler(vaultPassphrase(parsed.data.passkey));
       } catch (error) {
         request.log.warn({ error }, "demo action failed");
         return reply.code(400).send({

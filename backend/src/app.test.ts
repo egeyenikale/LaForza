@@ -16,6 +16,7 @@ const config = {
   CHAIN_ID: 31337,
   DATA_DIR: "/tmp/laforza-test",
   CONTRACT_ARTIFACTS_DIR: "/tmp/laforza-artifacts",
+  WDK_VAULT_PASSPHRASE: "laforza-test-vault",
   LOCAL_DEPLOYER_PRIVATE_KEY:
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
 };

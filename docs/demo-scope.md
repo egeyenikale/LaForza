@@ -9,9 +9,10 @@ npm run demo
 
 Open `http://localhost:3000`, click **Try Demo**, and connect MetaMask on `/app`.
 Approve the prompt to add/switch to **LaForza Local EVM** (`31337`). Enter the
-**Players** tab, choose a player, keep the prefilled WDK counterparty passkey, and
-select **Start this deal**. The connected address becomes the buyer and receives
-local test gas plus 2,000 six-decimal test USD₮.
+**Players** tab, choose a player, and select **Start this deal**. The WDK vault
+passphrase is an operator-side environment setting and is not shown to football
+users. The connected address becomes the buyer and receives local test gas plus
+2,000 six-decimal test USD₮.
 
 For public explorer-verifiable records, start with `npm run demo:testnet`
 instead. MetaMask switches to Base Sepolia (`84532`) and the connected account

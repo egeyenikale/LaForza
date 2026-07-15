@@ -672,7 +672,6 @@ export default function HomePage() {
   });
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [selectedPlayerId, setSelectedPlayerId] = useState("mert-kaya");
-  const [passkey, setPasskey] = useState("laforza-local-demo");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
@@ -824,7 +823,7 @@ export default function HomePage() {
       const response = await fetch(`${API_BASE}/demo/${endpoint}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ passkey, ...extra }),
+        body: JSON.stringify(extra),
       });
       const result = (await response.json()) as DemoState & { error?: string };
       if (!response.ok) throw new Error(result.error ?? "Action failed");
@@ -976,7 +975,6 @@ export default function HomePage() {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            passkey,
             playerId: selectedPlayerId,
             buyerAddress: address,
           }),
@@ -1069,30 +1067,44 @@ export default function HomePage() {
         ));
       const escrowAddress = escrowDeployment.address;
 
-      const verifierFunding = await signer.sendTransaction({
-        to: prepared.participants.verifier,
-        value: parseEther("0.0001"),
-      });
-      await verifierFunding.wait();
-      const mint = await token.getFunction("mint")(
-        address,
-        2_000n * 1_000_000n,
+      let verifierFundingTxHash: string | undefined;
+      const verifierBalance = await provider.getBalance(
+        prepared.participants.verifier,
       );
-      await mint.wait();
+      if (verifierBalance < parseEther("0.00005")) {
+        const verifierFunding = await signer.sendTransaction({
+          to: prepared.participants.verifier,
+          value: parseEther("0.0001"),
+        });
+        await verifierFunding.wait();
+        verifierFundingTxHash = verifierFunding.hash;
+      }
+
+      let mintTxHash: string | undefined;
+      const buyerTokenBalance = (await token.getFunction("balanceOf")(
+        address,
+      )) as bigint;
+      if (buyerTokenBalance < 2_000n * 1_000_000n) {
+        const mint = await token.getFunction("mint")(
+          address,
+          2_000n * 1_000_000n,
+        );
+        await mint.wait();
+        mintTxHash = mint.hash;
+      }
 
       const response = await fetch(`${API_BASE}/demo/adopt`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          passkey,
           playerId: selectedPlayerId,
           buyerAddress: address,
           tokenAddress,
           escrowAddress,
           tokenDeployTxHash: tokenDeployment.transactionHash,
           escrowDeployTxHash: escrowDeployment.transactionHash,
-          verifierFundingTxHash: verifierFunding.hash,
-          mintTxHash: mint.hash,
+          ...(verifierFundingTxHash ? { verifierFundingTxHash } : {}),
+          ...(mintTxHash ? { mintTxHash } : {}),
         }),
       });
       const result = (await response.json()) as DemoState & { error?: string };
@@ -1396,11 +1408,9 @@ export default function HomePage() {
                   ? state.selectedPlayer?.id
                   : undefined
               }
-              passkey={passkey}
               busy={busy}
               backendOnline={backendOnline}
               walletConnected={Boolean(walletAddress)}
-              onPasskey={setPasskey}
               onSelect={setSelectedPlayerId}
               onStart={() => void startMetamaskDeal()}
               onOpenDeal={() => goTo("deal")}
@@ -1430,11 +1440,9 @@ export default function HomePage() {
             <DealPanel
               state={state}
               selectedPlayer={selectedPlayer}
-              passkey={passkey}
               busy={busy}
               completed={completed}
               backendOnline={backendOnline}
-              onPasskey={setPasskey}
               onStart={() => void startMetamaskDeal()}
               onAction={(action) => {
                 if (
@@ -1746,11 +1754,9 @@ function PlayersPanel(props: {
   players: DemoPlayer[];
   selectedPlayerId: string;
   activePlayerId: string | undefined;
-  passkey: string;
   busy: string | null;
   backendOnline: boolean | null;
   walletConnected: boolean;
-  onPasskey: (value: string) => void;
   onSelect: (id: string) => void;
   onStart: () => void;
   onOpenDeal: () => void;
@@ -1870,14 +1876,6 @@ function PlayersPanel(props: {
           <strong>{selected?.name ?? "Choose a player"}</strong>
           <small>{selected?.currentClub}</small>
         </div>
-        <label>
-          Counterparty WDK vault passkey
-          <input
-            type="password"
-            value={props.passkey}
-            onChange={(event) => props.onPasskey(event.target.value)}
-          />
-        </label>
         {props.activePlayerId === props.selectedPlayerId ? (
           <button className="launch-button" onClick={props.onOpenDeal}>
             Open active deal →
@@ -1889,7 +1887,6 @@ function PlayersPanel(props: {
               !props.backendOnline ||
               !props.walletConnected ||
               props.busy !== null ||
-              props.passkey.length < 12 ||
               !selected
             }
             onClick={props.onStart}
@@ -1958,6 +1955,59 @@ function OffersPanel({
   );
   const counterparties = marketplace?.counterparties ?? [];
   const marketplaceOffers = marketplace?.offers ?? [];
+  const sentOffers = walletAddress
+    ? marketplaceOffers.filter(
+        ({ fromWallet }) =>
+          fromWallet.toLowerCase() === walletAddress.toLowerCase(),
+      )
+    : [];
+
+  const signedOfferList = (
+    visibleOffers: MarketplaceOffer[],
+    emptyCopy: string,
+    directionLabel: string,
+  ) =>
+    visibleOffers.length === 0 ? (
+      <p className="registry-empty">{emptyCopy}</p>
+    ) : (
+      <div className="marketplace-offer-list">
+        {[...visibleOffers].reverse().map((offer) => {
+          const target = players.find(({ id }) => id === offer.playerId);
+          return (
+            <article key={offer.id}>
+              <div>
+                <span>{directionLabel}</span>
+                <h4>{offer.from}</h4>
+                <code>{shortHex(offer.fromWallet, 7)}</code>
+              </div>
+              <div>
+                <small>PLAYER SUBJECT</small>
+                <strong>{target?.name ?? offer.playerId}</strong>
+                <span>{target?.position}</span>
+              </div>
+              <div>
+                <small>PROPOSED TERMS</small>
+                <strong>{usdt(offer.amountMicroUsdt)} test USD₮</strong>
+                <span>{usdt(offer.signingBonusMicroUsdt)} signing bonus</span>
+              </div>
+              <div>
+                <span className="offer-status status-received">
+                  SIGNATURE VERIFIED
+                </span>
+                <time>{new Date(offer.createdAt).toLocaleString("en-GB")}</time>
+                <button
+                  className="offer-review-button"
+                  onClick={() => onReviewPlayer(offer.playerId)}
+                >
+                  Review player →
+                </button>
+              </div>
+              <p>{offer.note}</p>
+            </article>
+          );
+        })}
+      </div>
+    );
   const ownedCounterparties = walletAddress
     ? counterparties.filter(
         ({ walletAddress: registeredWallet }) =>
@@ -2079,10 +2129,11 @@ function OffersPanel({
         >
           <header>
             <span>02 / SIGNED PROPOSAL</span>
-            <h3>Submit an offer</h3>
+            <h3>Send terms to Atlas FC</h3>
             <p>
-              The connected wallet signs the exact player, amount, bonus and
-              note before the record reaches the shared inbox.
+              A selling club or player agent proposes transfer terms to the
+              Atlas FC transfer desk. The player is the subject of the deal, not
+              the direct recipient of this payment proposal.
             </p>
           </header>
           <div className="form-split">
@@ -2164,7 +2215,7 @@ function OffersPanel({
           >
             {busy === "marketplace-offer"
               ? "Signing proposal…"
-              : "Sign & send offer →"}
+              : "Sign & send to Atlas FC →"}
           </button>
         </form>
       </div>
@@ -2196,60 +2247,35 @@ function OffersPanel({
         )}
       </section>
 
+      <section className="marketplace-inbox sent-offers">
+        <div className="registry-heading">
+          <div>
+            <span className="section-label">CONNECTED WALLET / OUTBOX</span>
+            <h3>Offers sent by me</h3>
+          </div>
+          <strong>{sentOffers.length}</strong>
+        </div>
+        {signedOfferList(
+          sentOffers,
+          walletAddress
+            ? "This connected wallet has not sent an offer yet."
+            : "Connect MetaMask to see offers signed by that wallet.",
+          "↑ SENT TO ATLAS FC",
+        )}
+      </section>
+
       <section className="marketplace-inbox">
         <div className="registry-heading">
           <div>
-            <span className="section-label">SHARED PLAYER INBOX</span>
-            <h3>Signed incoming offers</h3>
+            <span className="section-label">ATLAS FC / SHARED INBOX</span>
+            <h3>All incoming transfer proposals</h3>
           </div>
           <strong>{marketplaceOffers.length}</strong>
         </div>
-        {marketplaceOffers.length === 0 ? (
-          <p className="registry-empty">
-            Registered testers can now send the first wallet-signed offer.
-          </p>
-        ) : (
-          <div className="marketplace-offer-list">
-            {[...marketplaceOffers].reverse().map((offer) => {
-              const target = players.find(({ id }) => id === offer.playerId);
-              return (
-                <article key={offer.id}>
-                  <div>
-                    <span>↓ SIGNED INCOMING</span>
-                    <h4>{offer.from}</h4>
-                    <code>{shortHex(offer.fromWallet, 7)}</code>
-                  </div>
-                  <div>
-                    <small>PLAYER</small>
-                    <strong>{target?.name ?? offer.playerId}</strong>
-                    <span>{target?.position}</span>
-                  </div>
-                  <div>
-                    <small>TERMS</small>
-                    <strong>{usdt(offer.amountMicroUsdt)} test USD₮</strong>
-                    <span>
-                      {usdt(offer.signingBonusMicroUsdt)} signing bonus
-                    </span>
-                  </div>
-                  <div>
-                    <span className="offer-status status-received">
-                      SIGNATURE VERIFIED
-                    </span>
-                    <time>
-                      {new Date(offer.createdAt).toLocaleString("en-GB")}
-                    </time>
-                    <button
-                      className="offer-review-button"
-                      onClick={() => onReviewPlayer(offer.playerId)}
-                    >
-                      Review player →
-                    </button>
-                  </div>
-                  <p>{offer.note}</p>
-                </article>
-              );
-            })}
-          </div>
+        {signedOfferList(
+          marketplaceOffers,
+          "No selling club, agent or tester has sent terms to Atlas FC yet.",
+          "↓ RECEIVED BY ATLAS FC",
         )}
       </section>
 
@@ -2346,11 +2372,9 @@ function OffersPanel({
 function DealPanel(props: {
   state: DemoState;
   selectedPlayer: DemoPlayer | undefined;
-  passkey: string;
   busy: string | null;
   completed: number;
   backendOnline: boolean | null;
-  onPasskey: (value: string) => void;
   onStart: () => void;
   onAction: (action: ActionDefinition) => void;
 }) {
@@ -2371,20 +2395,11 @@ function DealPanel(props: {
               {props.selectedPlayer?.currentClub}
             </p>
           </div>
-          <label>
-            Counterparty WDK vault passkey
-            <input
-              type="password"
-              value={props.passkey}
-              onChange={(event) => props.onPasskey(event.target.value)}
-            />
-          </label>
           <button
             className="launch-button"
             disabled={
               !props.backendOnline ||
               props.busy !== null ||
-              props.passkey.length < 12 ||
               !props.selectedPlayer
             }
             onClick={props.onStart}
@@ -2705,6 +2720,44 @@ function AboutPanel() {
             The agent can prepare terms, but cannot exceed budget, approve its
             own exception, change counterparties, or send arbitrary wallet
             transactions.
+          </p>
+        </article>
+      </div>
+      <div className="deal-history-heading">
+        <span className="section-label">WHO SENDS WHAT TO WHOM?</span>
+        <h3>The commercial and settlement flow</h3>
+      </div>
+      <div className="architecture-grid party-flow">
+        <article>
+          <span>01 / SELLING SIDE</span>
+          <h3>Club or agent → Atlas FC</h3>
+          <p>
+            A verified external wallet signs proposed transfer terms for one
+            player. This is an off-chain commercial offer, not a payment.
+          </p>
+        </article>
+        <article>
+          <span>02 / BUYING CLUB</span>
+          <h3>Atlas FC opens the deal</h3>
+          <p>
+            Atlas selects the player, applies its spending mandate, and deploys
+            the exact escrow terms from its MetaMask buyer account.
+          </p>
+        </article>
+        <article>
+          <span>03 / REQUIRED SIGNERS</span>
+          <h3>Buyer + seller + player</h3>
+          <p>
+            All three approve the same EIP-712 digest. The player is a required
+            deal signer, rather than the direct recipient of the club offer.
+          </p>
+        </article>
+        <article>
+          <span>04 / SETTLEMENT</span>
+          <h3>Escrow → player and club</h3>
+          <p>
+            Test USD₮ releases the signing bonus to the player and the milestone
+            amount to the selling club after verifier evidence.
           </p>
         </article>
       </div>

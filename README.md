@@ -68,8 +68,8 @@ WDK is load-bearing in three places:
    1,000 USD₮ ceiling. A 900 USD₮ proposal requires approval of its exact digest.
 2. **Self-custodial counterparties** — seller, player, and verifier are distinct
    `@tetherto/wdk-wallet-evm` accounts. Their BIP-39 phrases are AES-256-GCM
-   encrypted locally with a passkey and never returned by the API. The buyer is
-   the user's connected MetaMask account.
+   encrypted locally with the server-side `WDK_VAULT_PASSPHRASE` and never
+   returned by the API. The buyer is the user's connected MetaMask account.
 3. **Split execution boundary** — MetaMask signs and broadcasts the buyer's exact
    ERC-20 approval and escrow funding calls. A narrowly scoped WDK policy permits
    the verifier to release only the proven milestone. The UI exposes transaction

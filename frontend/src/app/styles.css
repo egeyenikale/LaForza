@@ -700,7 +700,7 @@ h1 em {
   color: white;
   display: grid;
   gap: 30px;
-  grid-template-columns: 1fr 0.8fr auto;
+  grid-template-columns: 1fr auto;
   margin-top: 22px;
   padding: 25px;
 }
@@ -714,24 +714,6 @@ h1 em {
 }
 .selection-bar > div small {
   color: rgba(255, 255, 255, 0.6);
-}
-.selection-bar label {
-  color: rgba(255, 255, 255, 0.6);
-  display: flex;
-  flex-direction: column;
-  font-family: monospace;
-  font-size: 8px;
-  gap: 7px;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-}
-.selection-bar input {
-  background: transparent;
-  border: 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.5);
-  color: white;
-  outline: 0;
-  padding: 8px 0;
 }
 
 .marketplace-compose {
@@ -1183,7 +1165,7 @@ h1 em {
   color: white;
   display: grid;
   gap: 40px;
-  grid-template-columns: 1.4fr 1fr auto;
+  grid-template-columns: 1fr auto;
   padding: clamp(28px, 5vw, 64px);
 }
 .bootstrap-panel h3 {
@@ -1195,25 +1177,6 @@ h1 em {
   color: rgba(255, 255, 255, 0.65);
   line-height: 1.5;
   max-width: 600px;
-}
-.bootstrap-panel label {
-  color: rgba(255, 255, 255, 0.65);
-  display: flex;
-  flex-direction: column;
-  font-family: monospace;
-  font-size: 10px;
-  gap: 8px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-.bootstrap-panel input {
-  background: transparent;
-  border: 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.5);
-  color: white;
-  min-width: 230px;
-  outline: 0;
-  padding: 10px 2px;
 }
 .launch-button {
   background: var(--green);

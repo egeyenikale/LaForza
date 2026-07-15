@@ -14,6 +14,7 @@ const configSchema = z.object({
   CONTRACT_ARTIFACTS_DIR: z
     .string()
     .default(resolve(process.cwd(), "../contracts/artifacts")),
+  WDK_VAULT_PASSPHRASE: z.string().min(12).default("laforza-local-demo"),
   LOCAL_DEPLOYER_PRIVATE_KEY: z
     .string()
     .regex(/^0x[a-fA-F0-9]{64}$/)

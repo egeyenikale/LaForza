@@ -51,6 +51,7 @@ const HUMAN_APPROVAL_THRESHOLD = 750n * USDT;
 type Artifact = {
   abi: InterfaceAbi;
   bytecode: string;
+  deployedBytecode: string;
 };
 
 type DemoSignatures = Partial<Record<"BUYER" | "SELLER" | "PLAYER", string>>;
@@ -96,8 +97,8 @@ export type ExternalDeploymentInput = {
   escrowAddress: string;
   tokenDeployTxHash: string;
   escrowDeployTxHash: string;
-  verifierFundingTxHash: string;
-  mintTxHash: string;
+  verifierFundingTxHash?: string;
+  mintTxHash?: string;
 };
 
 export type RegisterCounterpartyInput = {
@@ -205,6 +206,10 @@ export class DemoService {
 
   players(): readonly DemoPlayer[] {
     return demoPlayers;
+  }
+
+  operatorVaultPassphrase(): string {
+    return this.config.WDK_VAULT_PASSPHRASE;
   }
 
   async registerCounterparty(
@@ -392,6 +397,9 @@ export class DemoService {
     if (tokenCode === "0x" || escrowCode === "0x") {
       throw new Error("Public testnet contracts were not found");
     }
+    if (keccak256(tokenCode) !== keccak256(tokenArtifact.deployedBytecode)) {
+      throw new Error("Test USDt runtime does not match the La Forza artifact");
+    }
     if (BigInt(tokenDecimals) !== 6n) {
       throw new Error("Test USDt must use six decimals");
     }
@@ -435,34 +443,57 @@ export class DemoService {
       throw new Error("Public testnet authorization digest mismatch");
     }
 
-    const receipts = await Promise.all(
+    const [tokenDeploymentReceipt, escrowDeploymentReceipt] = await Promise.all(
       [
-        input.tokenDeployTxHash,
-        input.escrowDeployTxHash,
-        input.verifierFundingTxHash,
-        input.mintTxHash,
-      ].map((hash) => this.#wait(hash)),
+        this.#wait(input.tokenDeployTxHash),
+        this.#wait(input.escrowDeployTxHash),
+      ],
     );
-    if (
-      receipts.some(
-        (receipt) => receipt.from.toLowerCase() !== buyer.toLowerCase(),
-      )
-    ) {
-      throw new Error("Every deployment transaction must come from the buyer");
+    const deploymentReceipts = [
+      ["Token deployment", tokenDeploymentReceipt],
+      ["Escrow deployment", escrowDeploymentReceipt],
+    ] as const;
+    for (const [label, receipt] of deploymentReceipts) {
+      if (receipt.from.toLowerCase() !== buyer.toLowerCase()) {
+        throw new Error(
+          `${label} came from ${receipt.from}; expected buyer ${buyer}`,
+        );
+      }
     }
-    if (getAddress(receipts[0]!.contractAddress!) !== tokenAddress) {
+    if (getAddress(tokenDeploymentReceipt.contractAddress!) !== tokenAddress) {
       throw new Error("Token deployment receipt does not match the token");
     }
-    if (getAddress(receipts[1]!.contractAddress!) !== escrowAddress) {
+    if (
+      getAddress(escrowDeploymentReceipt.contractAddress!) !== escrowAddress
+    ) {
       throw new Error("Escrow deployment receipt does not match the escrow");
     }
-    if (getAddress(receipts[2]!.to!) !== verifier) {
-      throw new Error(
-        "Verifier gas transaction does not fund the WDK verifier",
+
+    if (input.verifierFundingTxHash) {
+      const verifierFundingReceipt = await this.#wait(
+        input.verifierFundingTxHash,
       );
+      if (
+        !verifierFundingReceipt.to ||
+        getAddress(verifierFundingReceipt.to) !== verifier
+      ) {
+        throw new Error(
+          "Verifier gas transaction does not fund the WDK verifier",
+        );
+      }
     }
-    if (getAddress(receipts[3]!.to!) !== tokenAddress) {
-      throw new Error("Mint transaction does not target test USDt");
+    if ((await this.#provider.getBalance(verifier)) === 0n) {
+      throw new Error("The WDK verifier needs Base Sepolia ETH for settlement");
+    }
+
+    if (input.mintTxHash) {
+      const mintReceipt = await this.#wait(input.mintTxHash);
+      if (!mintReceipt.to || getAddress(mintReceipt.to) !== tokenAddress) {
+        throw new Error("Mint transaction does not target test USDt");
+      }
+    }
+    if (BigInt(await token.getFunction("balanceOf")(buyer)) < TOTAL_AMOUNT) {
+      throw new Error("Buyer needs enough test USDt to fund the deal");
     }
 
     const now = Date.now();
@@ -478,8 +509,10 @@ export class DemoService {
       transactions: {
         tokenDeployment: input.tokenDeployTxHash,
         escrowDeployment: input.escrowDeployTxHash,
-        verifierGas: input.verifierFundingTxHash,
-        mint: input.mintTxHash,
+        ...(input.verifierFundingTxHash
+          ? { verifierGas: input.verifierFundingTxHash }
+          : {}),
+        ...(input.mintTxHash ? { mint: input.mintTxHash } : {}),
       },
       selectedPlayer,
       offers: [
