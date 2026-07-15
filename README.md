@@ -16,13 +16,20 @@ npm install
 npm run demo
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The command starts:
+Open [http://localhost:3000](http://localhost:3000). The root route is the
+standalone landing page; **Try Demo** opens the working application at
+[http://localhost:3000/app](http://localhost:3000/app). The command starts:
 
 - a local Hardhat EVM chain on `127.0.0.1:8545`;
 - the Fastify API on `127.0.0.1:4000`;
 - the Next.js deal room on `localhost:3000`.
 
-The application is split into six working areas:
+The application requires the MetaMask browser extension. It adds/switches to the
+local EVM chain (`31337`) through the standard EIP-1193 prompt. The connected
+address becomes the escrow buyer and receives local test ETH plus 2,000 test
+USD₮ when a deal is deployed.
+
+The `/app` route is split into six working areas:
 
 - **Overview** — current file, progress, latest evidence, and released value;
 - **Players** — a selectable four-player shortlist with football and contract context;
@@ -31,10 +38,11 @@ The application is split into six working areas:
 - **Ledger** — events, EIP-712 digest, balances, and transaction hashes;
 - **About** — the product problem, control model, track honesty, and local run guide.
 
-Select a player and click the seven deal-room actions in order. They demonstrate
-a policy rejection, a human approval boundary, three EIP-712 signatures, a WDK
-token approval, escrow funding, and verifier-only milestone release. Every amount
-is local **test USD₮**; there are no real funds.
+Connect MetaMask, select a player, and click the seven deal-room actions in order.
+They demonstrate a policy rejection, a human approval boundary, a real MetaMask
+EIP-712 buyer signature, WDK counterparty signatures, MetaMask ERC-20 approval and
+escrow funding, and WDK verifier-only milestone release. Every amount is local
+**test USD₮**; there are no real funds.
 
 ## Why this is a real WDK entry
 
@@ -43,12 +51,14 @@ WDK is load-bearing in three places:
 1. **Policy-bound authorization** — `@tetherto/wdk` simulates and enforces the
    buying club's `signTypedData` rules. A 1,100 USD₮ proposal is denied by the
    1,000 USD₮ ceiling. A 900 USD₮ proposal requires approval of its exact digest.
-2. **Self-custodial signers** — buyer, seller, player, and verifier are distinct
+2. **Self-custodial counterparties** — seller, player, and verifier are distinct
    `@tetherto/wdk-wallet-evm` accounts. Their BIP-39 phrases are AES-256-GCM
-   encrypted locally with a passkey and never returned by the API.
-3. **Wallet execution** — narrowly scoped WDK policies allow only the exact test
-   token approval, canonical escrow funding call, and evidence-bound milestone
-   release. The UI exposes the resulting transaction hashes and balances.
+   encrypted locally with a passkey and never returned by the API. The buyer is
+   the user's connected MetaMask account.
+3. **Split execution boundary** — MetaMask signs and broadcasts the buyer's exact
+   ERC-20 approval and escrow funding calls. A narrowly scoped WDK policy permits
+   the verifier to release only the proven milestone. The UI exposes transaction
+   hashes, connected account, token address, network, and balances.
 
 The TypeScript protocol package and Solidity contract independently compute the
 same EIP-712 digest. Contract tests fail if the two formats drift.
@@ -62,7 +72,7 @@ judge-runnable track is stronger than decorative SDK labels.
 ## Repository layout
 
 ```text
-frontend/          Tabbed football operations workspace and live demo controls
+frontend/          Separate landing page, /app workspace, MetaMask EIP-1193 client
 backend/           Player catalog, offer book, WDK policies, vault, event log
 packages/domain/   Shared validation and deterministic deal state machine
 packages/protocol/ Canonical EIP-712 authorization and milestone hashing
@@ -74,11 +84,13 @@ docs/              Architecture, trust boundaries, and demo runbook
 
 ```bash
 npm run check
+npm run verify:metamask
 ```
 
-The suite covers the domain state machine, policy verdicts, recovered WDK
-signatures, encrypted vault behavior, append-only events, protocol hashes, and
-escrow permissions/invariants.
+The suite covers the domain state machine, policy verdicts, recovered WDK and
+external-buyer signatures, encrypted vault behavior, append-only events,
+protocol hashes, and escrow permissions/invariants. `verify:metamask` runs the
+same external EVM signature/approve/fund path used by MetaMask against Hardhat.
 
 ## Safety boundary
 

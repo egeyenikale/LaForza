@@ -157,6 +157,7 @@ contract DeadlineEscrow is EIP712, ReentrancyGuard {
         bytes calldata sellerSignature,
         bytes calldata playerSignature
     ) external nonReentrant {
+        if (msg.sender != buyer) revert NotBuyer();
         if (funded) revert AlreadyFunded();
         if (block.timestamp > fundingDeadline) revert DealExpired();
 

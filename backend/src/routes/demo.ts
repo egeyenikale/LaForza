@@ -9,6 +9,19 @@ const passkeySchema = z.object({
 
 const bootstrapSchema = passkeySchema.extend({
   playerId: z.string().min(2).max(80).default("mert-kaya"),
+  buyerAddress: z
+    .string()
+    .regex(/^0x[a-fA-F0-9]{40}$/)
+    .optional(),
+});
+
+const metamaskSignatureSchema = z.object({
+  signature: z.string().regex(/^0x[a-fA-F0-9]{130}$/),
+});
+
+const metamaskFundingSchema = z.object({
+  approvalTxHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/),
+  fundingTxHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/),
 });
 
 export const registerDemoRoutes: FastifyPluginAsync<{
@@ -24,6 +37,7 @@ export const registerDemoRoutes: FastifyPluginAsync<{
       return await demoService.bootstrap(
         parsed.data.passkey,
         parsed.data.playerId,
+        parsed.data.buyerAddress,
       );
     } catch (error) {
       request.log.warn({ error }, "demo bootstrap failed");
@@ -60,6 +74,24 @@ export const registerDemoRoutes: FastifyPluginAsync<{
   action("/demo/approve", (passkey) =>
     demoService.approveAndSignBuyer(passkey),
   );
+
+  app.post("/demo/approve/metamask", async (request, reply) => {
+    const parsed = metamaskSignatureSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send(parsed.error.flatten());
+    try {
+      return await demoService.recordMetamaskBuyerSignature(
+        parsed.data.signature,
+      );
+    } catch (error) {
+      request.log.warn({ error }, "MetaMask signature validation failed");
+      return reply.code(400).send({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Signature validation failed",
+      });
+    }
+  });
   action("/demo/sign/seller", (passkey) =>
     demoService.signParty("SELLER", passkey),
   );
@@ -67,5 +99,21 @@ export const registerDemoRoutes: FastifyPluginAsync<{
     demoService.signParty("PLAYER", passkey),
   );
   action("/demo/fund", (passkey) => demoService.fund(passkey));
+  app.post("/demo/fund/metamask", async (request, reply) => {
+    const parsed = metamaskFundingSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send(parsed.error.flatten());
+    try {
+      return await demoService.recordMetamaskFunding(
+        parsed.data.approvalTxHash,
+        parsed.data.fundingTxHash,
+      );
+    } catch (error) {
+      request.log.warn({ error }, "MetaMask funding validation failed");
+      return reply.code(400).send({
+        error:
+          error instanceof Error ? error.message : "Funding validation failed",
+      });
+    }
+  });
   action("/demo/release", (passkey) => demoService.releaseMilestone(passkey));
 };

@@ -18,7 +18,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "npm run test --workspace @laforza/domain && npm run test --workspace @laforza/protocol && npm run test --workspace @laforza/contracts && npm run test --workspace @laforza/backend",
-    "typecheck": "npm run build --workspace @laforza/domain && npm run build --workspace @laforza/protocol && npm run typecheck --workspace @laforza/contracts && npm run typecheck --workspace @laforza/backend && npm run typecheck --workspace @laforza/frontend"
+    "typecheck": "npm run build --workspace @laforza/domain && npm run build --workspace @laforza/protocol && npm run typecheck --workspace @laforza/contracts && npm run typecheck --workspace @laforza/backend && npm run typecheck --workspace @laforza/frontend",
+    "verify:metamask": "node scripts/verify-metamask-flow.mjs"
   },
   "engines": {
     "node": ">=22.17"

@@ -122,7 +122,7 @@ describe("DeadlineEscrow", function () {
 
     await expect(
       fixture.escrow
-        .connect(fixture.relayer)
+        .connect(fixture.buyer)
         .fund(buyerSignature, sellerSignature, playerSignature),
     )
       .to.emit(fixture.escrow, "DealFunded")
@@ -175,11 +175,30 @@ describe("DeadlineEscrow", function () {
 
     await expect(
       fixture.escrow
-        .connect(fixture.relayer)
+        .connect(fixture.buyer)
         .fund(buyerSignature, sellerSignature, sellerSignature),
     )
       .to.be.revertedWithCustomError(fixture.escrow, "InvalidSignature")
       .withArgs(fixture.player.address);
+  });
+
+  it("allows only the named buyer to fund the escrow", async function () {
+    const fixture = await deployFixture();
+    const signatures = await Promise.all(
+      [fixture.buyer, fixture.seller, fixture.player].map((signer) =>
+        signer.signTypedData(
+          fixture.domain,
+          dealAuthorizationTypes,
+          fixture.message,
+        ),
+      ),
+    );
+
+    await expect(
+      fixture.escrow
+        .connect(fixture.relayer)
+        .fund(signatures[0]!, signatures[1]!, signatures[2]!),
+    ).to.be.revertedWithCustomError(fixture.escrow, "NotBuyer");
   });
 
   it("allows only the named verifier to release a milestone", async function () {
@@ -212,7 +231,7 @@ describe("DeadlineEscrow", function () {
       .connect(fixture.buyer)
       .approve(await fixture.escrow.getAddress(), fixture.totalAmount);
     await fixture.escrow
-      .connect(fixture.relayer)
+      .connect(fixture.buyer)
       .fund(signatures[0]!, signatures[1]!, signatures[2]!);
 
     const refundTimestamp =

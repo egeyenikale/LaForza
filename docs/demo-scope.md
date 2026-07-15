@@ -7,24 +7,27 @@ npm install
 npm run demo
 ```
 
-Open `http://localhost:3000`, enter the **Players** tab, choose a player, keep the
-prefilled local passkey, and select **Start this deal**. The selected player and
-current club will propagate into the active file, offer history, and deal room.
+Open `http://localhost:3000`, click **Try Demo**, and connect MetaMask on `/app`.
+Approve the prompt to add/switch to **LaForza Local EVM** (`31337`). Enter the
+**Players** tab, choose a player, keep the prefilled WDK counterparty passkey, and
+select **Start this deal**. The connected address becomes the buyer and receives
+local test gas plus 2,000 six-decimal test USD₮.
 
 ## Seven visible proofs
 
 1. **Try 1,100 USD₮** — WDK reports `DENY` and the `deny-over-budget` rule.
 2. **Counter at 900 USD₮** — WDK requires human sporting-director approval.
-3. **Director approves** — the buyer signs only the approved canonical digest.
+3. **Director approves** — MetaMask signs only the approved canonical EIP-712 digest.
 4. **Seller signs** — the selling-club WDK account signs the same digest.
 5. **Player signs** — the player account completes the required signer set.
-6. **Fund escrow** — WDK broadcasts an ERC-20 approval and escrow funding
-   transaction. The player balance becomes 250 test USD₮.
+6. **Fund escrow** — MetaMask prompts for the ERC-20 approval and escrow funding
+   transactions. The player balance becomes 250 test USD₮.
 7. **Verify appearance** — the verifier broadcasts milestone evidence. The seller
    balance becomes 650 test USD₮ and the escrow balance returns to zero.
 
-The audit trail, actor balances, contract addresses, authorization digest, and
-all three write transaction hashes are visible on the page.
+The connected account, chain, test ETH, test USD₮, audit trail, actor balances,
+contract addresses, authorization digest, and all three write transaction
+hashes are visible on the page. The local faucet can mint another 500 test USD₮.
 
 The **Offers** tab preserves the initial club ask, the policy-rejected proposal,
 and the active 900 test USD₮ counter as separate commercial records. Its state
@@ -48,3 +51,16 @@ Released      900 test USD₮
 - A cloud custodian or hosted signing service
 - Pears and QVAC track claims
 - More than one verifier/evidence design
+
+## Automated external-wallet verification
+
+With `npm run demo` already running:
+
+```bash
+npm run verify:metamask
+```
+
+The script uses an external Hardhat EVM signer to exercise the exact typed-data,
+token approval, escrow funding, and WDK release path used by the browser. It is a
+repeatable integration check; interactive browser approvals still occur only in
+MetaMask.

@@ -10,6 +10,7 @@ import WalletManagerEvm from "@tetherto/wdk-wallet-evm";
 import {
   Contract,
   ContractFactory,
+  getAddress,
   Interface,
   JsonRpcProvider,
   NonceManager,
@@ -17,6 +18,7 @@ import {
   id,
   keccak256,
   parseEther,
+  recoverAddress,
   toUtf8Bytes,
   type InterfaceAbi,
   type TransactionReceipt,
@@ -69,6 +71,8 @@ type DemoOffer = {
 
 type DemoRuntime = {
   wallets: PublicWallet[];
+  buyerAddress: string;
+  custodyMode: "WDK" | "METAMASK";
   tokenAddress: string;
   escrowAddress: string;
   envelope: DealAuthorizationEnvelope;
@@ -103,6 +107,14 @@ function jsonBigInt(value: bigint): string {
   return value.toString();
 }
 
+function publicRuntimeWallets(runtime: DemoRuntime): PublicWallet[] {
+  return runtime.wallets.map((wallet) =>
+    wallet.role === "BUYER"
+      ? { ...wallet, address: runtime.buyerAddress }
+      : wallet,
+  );
+}
+
 export class DemoService {
   readonly #provider: JsonRpcProvider;
   readonly #vault: LocalWalletVault;
@@ -122,13 +134,16 @@ export class DemoService {
   async bootstrap(
     passkey: string,
     playerId = "mert-kaya",
+    externalBuyerAddress?: string,
   ): Promise<Record<string, unknown>> {
     await this.#provider.getBlockNumber();
     const selectedPlayer = playerById(playerId);
     const wallets = (await this.#vault.exists())
       ? await this.#vault.list(passkey)
       : await this.#vault.create(passkey);
-    const buyer = roleAddress(wallets, "BUYER");
+    const buyer = externalBuyerAddress
+      ? getAddress(externalBuyerAddress)
+      : roleAddress(wallets, "BUYER");
     const seller = roleAddress(wallets, "SELLER");
     const player = roleAddress(wallets, "PLAYER");
     const verifier = roleAddress(wallets, "VERIFIER");
@@ -212,6 +227,8 @@ export class DemoService {
 
     this.#runtime = {
       wallets,
+      buyerAddress: buyer,
+      custodyMode: externalBuyerAddress ? "METAMASK" : "WDK",
       tokenAddress,
       escrowAddress,
       envelope,
@@ -241,6 +258,7 @@ export class DemoService {
       authorizationDigest: localDigest,
       playerId: selectedPlayer.id,
       playerName: selectedPlayer.name,
+      custodyMode: externalBuyerAddress ? "METAMASK" : "WDK",
       note: "Local test chain only — no real funds",
     });
     return this.state();
@@ -301,6 +319,9 @@ export class DemoService {
 
   async approveAndSignBuyer(passkey: string): Promise<Record<string, unknown>> {
     const runtime = this.#requireRuntime();
+    if (runtime.custodyMode === "METAMASK") {
+      throw new Error("Connected MetaMask must sign the buyer authorization");
+    }
     const digest = hashDealAuthorization(runtime.envelope);
     runtime.humanApprovedDigest = digest;
     const result = await this.#evaluateBuyer(
@@ -321,12 +342,46 @@ export class DemoService {
     return this.state();
   }
 
+  async recordMetamaskBuyerSignature(
+    signature: string,
+  ): Promise<Record<string, unknown>> {
+    const runtime = this.#requireRuntime();
+    if (runtime.custodyMode !== "METAMASK") {
+      throw new Error("This deal is not controlled by MetaMask");
+    }
+    const acceptedOffer = [...runtime.offers]
+      .reverse()
+      .find(
+        (offer) =>
+          offer.amountMicroUsdt === jsonBigInt(TOTAL_AMOUNT) &&
+          offer.status === "AWAITING_HUMAN_APPROVAL",
+      );
+    if (!acceptedOffer) {
+      throw new Error("The counteroffer is not awaiting human approval");
+    }
+    const digest = hashDealAuthorization(runtime.envelope);
+    const recovered = recoverAddress(digest, signature);
+    if (recovered.toLowerCase() !== runtime.buyerAddress.toLowerCase()) {
+      throw new Error("Signature does not belong to the connected buyer");
+    }
+    runtime.humanApprovedDigest = digest;
+    runtime.signatures.BUYER = signature;
+    this.#updateAcceptedOffer(runtime, "APPROVED");
+    await this.#events.append("BUYER_AUTHORIZATION_SIGNED", {
+      signer: runtime.buyerAddress,
+      authorizationDigest: digest,
+      wallet: "MetaMask / EIP-1193",
+      policyDecision: "HUMAN_APPROVED",
+    });
+    return this.state();
+  }
+
   async signParty(
     role: "SELLER" | "PLAYER",
     passkey: string,
   ): Promise<Record<string, unknown>> {
     const runtime = this.#requireRuntime();
-    const counterparty = roleAddress(runtime.wallets, "BUYER");
+    const counterparty = runtime.buyerAddress;
     const policy = this.#partyPolicy(counterparty, runtime.envelope);
     const result = await this.#vault.withSeed(role, passkey, (seed) =>
       new WdkDealAgent(seed).evaluateAuthorization({
@@ -350,6 +405,9 @@ export class DemoService {
 
   async fund(passkey: string): Promise<Record<string, unknown>> {
     const runtime = this.#requireRuntime();
+    if (runtime.custodyMode === "METAMASK") {
+      throw new Error("Connected MetaMask must approve and fund this escrow");
+    }
     const { BUYER, SELLER, PLAYER } = runtime.signatures;
     if (!BUYER || !SELLER || !PLAYER) {
       throw new Error("Buyer, seller, and player signatures are required");
@@ -418,6 +476,60 @@ export class DemoService {
     await this.#events.append("ESCROW_FUNDED", {
       approveTxHash: transactions.approval,
       fundingTxHash: transactions.funding,
+      signingBonusMicroUsdt: jsonBigInt(SIGNING_BONUS),
+    });
+    return this.state();
+  }
+
+  async recordMetamaskFunding(
+    approvalTxHash: string,
+    fundingTxHash: string,
+  ): Promise<Record<string, unknown>> {
+    const runtime = this.#requireRuntime();
+    if (runtime.custodyMode !== "METAMASK") {
+      throw new Error("This deal is not controlled by MetaMask");
+    }
+    const approvalReceipt = await this.#wait(approvalTxHash);
+    const fundingReceipt = await this.#wait(fundingTxHash);
+    if (
+      approvalReceipt.from.toLowerCase() !== runtime.buyerAddress.toLowerCase()
+    ) {
+      throw new Error("Approval transaction was not sent by the buyer");
+    }
+    if (
+      fundingReceipt.from.toLowerCase() !== runtime.buyerAddress.toLowerCase()
+    ) {
+      throw new Error("Funding transaction was not sent by the buyer");
+    }
+    if (
+      approvalReceipt.to?.toLowerCase() !== runtime.tokenAddress.toLowerCase()
+    ) {
+      throw new Error("Approval transaction does not target test USDt");
+    }
+    if (
+      fundingReceipt.to?.toLowerCase() !== runtime.escrowAddress.toLowerCase()
+    ) {
+      throw new Error("Funding transaction does not target this escrow");
+    }
+    const escrowArtifact = await this.#readArtifact(
+      "contracts/DeadlineEscrow.sol/DeadlineEscrow.json",
+    );
+    const escrow = new Contract(
+      runtime.escrowAddress,
+      escrowArtifact.abi,
+      this.#provider,
+    );
+    if (!(await escrow.getFunction("funded")())) {
+      throw new Error("Escrow is not funded on-chain");
+    }
+    runtime.transactions.approval = approvalTxHash;
+    runtime.transactions.funding = fundingTxHash;
+    this.#updateAcceptedOffer(runtime, "FUNDED");
+    await this.#events.append("ESCROW_FUNDED", {
+      approveTxHash: approvalTxHash,
+      fundingTxHash,
+      buyer: runtime.buyerAddress,
+      wallet: "MetaMask / EIP-1193",
       signingBonusMicroUsdt: jsonBigInt(SIGNING_BONUS),
     });
     return this.state();
@@ -493,9 +605,10 @@ export class DemoService {
       escrowArtifact.abi,
       this.#provider,
     );
+    const visibleWallets = publicRuntimeWallets(runtime);
     const balances = Object.fromEntries(
       await Promise.all(
-        runtime.wallets.map(async ({ role, address }) => [
+        visibleWallets.map(async ({ role, address }) => [
           role,
           jsonBigInt(await token.getFunction("balanceOf")(address)),
         ]),
@@ -508,11 +621,17 @@ export class DemoService {
     return {
       initialized: true,
       network: {
-        name: "Hardhat Local",
+        name: "LaForza Local EVM",
         chainId: this.config.CHAIN_ID,
         rpcUrl: this.config.CHAIN_RPC_URL,
+        nativeCurrency: {
+          name: "Test Ether",
+          symbol: "ETH",
+          decimals: 18,
+        },
         disclaimer: "Demo-only test USDT. No real funds or mainnet assets.",
       },
+      custodyMode: runtime.custodyMode,
       deal: {
         title: `Atlas FC × ${runtime.selectedPlayer.currentClub} — International Registration`,
         playerName: runtime.selectedPlayer.name,
@@ -523,15 +642,41 @@ export class DemoService {
         humanApprovalThresholdMicroUsdt: jsonBigInt(HUMAN_APPROVAL_THRESHOLD),
         maximumMandateMicroUsdt: jsonBigInt(BUYER_MAXIMUM),
       },
+      authorization: {
+        dealId: runtime.envelope.authorization.dealId,
+        buyer: runtime.envelope.authorization.buyer,
+        seller: runtime.envelope.authorization.seller,
+        player: runtime.envelope.authorization.player,
+        token: runtime.envelope.authorization.token,
+        totalAmount: jsonBigInt(runtime.envelope.authorization.totalAmount),
+        signingBonus: jsonBigInt(runtime.envelope.authorization.signingBonus),
+        milestoneRoot: runtime.envelope.authorization.milestoneRoot,
+        fundingDeadline: jsonBigInt(
+          runtime.envelope.authorization.fundingDeadline,
+        ),
+        settlementDeadline: jsonBigInt(
+          runtime.envelope.authorization.settlementDeadline,
+        ),
+      },
       contracts: {
         token: runtime.tokenAddress,
         escrow: runtime.escrowAddress,
       },
-      wallets: runtime.wallets,
+      wallets: visibleWallets,
       players: demoPlayers,
       selectedPlayer: runtime.selectedPlayer,
       offers: runtime.offers,
       signatures: Object.keys(runtime.signatures),
+      execution:
+        runtime.signatures.BUYER &&
+        runtime.signatures.SELLER &&
+        runtime.signatures.PLAYER
+          ? {
+              buyerSignature: runtime.signatures.BUYER,
+              sellerSignature: runtime.signatures.SELLER,
+              playerSignature: runtime.signatures.PLAYER,
+            }
+          : undefined,
       humanApproved: Boolean(runtime.humanApprovedDigest),
       transactions: runtime.transactions,
       chainState: {
