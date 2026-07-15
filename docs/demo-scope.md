@@ -20,6 +20,12 @@ deploys the test token plus escrow itself. This requires faucet-funded Base
 Sepolia ETH. The resulting contract and transaction links remain visible on the
 public explorer.
 
+The wallet dock can also deploy the shared La Forza test USDt contract before a
+deal exists and mint 50,000 units to the connected MetaMask address in the same
+flow. The backend validates and persists that token. Later tester wallets reuse
+the same contract and mint directly to their own connected address; subsequent
+deals also reuse it.
+
 ## Seven visible proofs
 
 1. **Try 1,100 USD₮** — WDK reports `DENY` and the `deny-over-budget` rule.

@@ -88,6 +88,12 @@ type MarketplaceOffer = {
 
 type DemoState = {
   initialized: boolean;
+  testToken?: {
+    address: string;
+    deployer: string;
+    transactionHash: string;
+    createdAt: string;
+  };
   custodyMode?: "WDK" | "METAMASK";
   network?: {
     name: string;
@@ -723,6 +729,7 @@ export default function HomePage() {
   const [walletChainId, setWalletChainId] = useState<number | null>(null);
   const [walletEth, setWalletEth] = useState("0");
   const [walletUsdt, setWalletUsdt] = useState("0");
+  const tokenAddress = state.contracts?.token ?? state.testToken?.address;
 
   const loadState = useCallback(async () => {
     try {
@@ -756,12 +763,10 @@ export default function HomePage() {
       ]);
       setWalletEth(Number(formatEther(balance)).toFixed(3));
       setWalletChainId(Number(network.chainId));
-      if (nextState.contracts?.token) {
-        const token = new Contract(
-          nextState.contracts.token,
-          erc20Abi,
-          provider,
-        );
+      const nextTokenAddress =
+        nextState.contracts?.token ?? nextState.testToken?.address;
+      if (nextTokenAddress) {
+        const token = new Contract(nextTokenAddress, erc20Abi, provider);
         const tokenBalance = (await token.getFunction("balanceOf")(
           address,
         )) as bigint;
@@ -1046,9 +1051,13 @@ export default function HomePage() {
         artifacts.token.bytecode,
         signer,
       );
-      const tokenDeployment =
-        (await findExistingTestToken(provider, address, artifacts.token)) ??
-        (await deployRecoverably(provider, address, tokenFactory, []));
+      const tokenDeployment = state.testToken
+        ? {
+            address: state.testToken.address,
+            transactionHash: state.testToken.transactionHash,
+          }
+        : ((await findExistingTestToken(provider, address, artifacts.token)) ??
+          (await deployRecoverably(provider, address, tokenFactory, [])));
       const tokenAddress = tokenDeployment.address;
       const token = new Contract(tokenAddress, artifacts.token.abi, signer);
 
@@ -1398,9 +1407,90 @@ export default function HomePage() {
     }
   };
 
+  const deployTestUsdt = async () => {
+    const address = walletAddress ?? (await connectWallet());
+    if (!address) return;
+    if (tokenAddress) {
+      await mintTestUsdt();
+      return;
+    }
+    setBusy("token-deploy");
+    setError(null);
+    try {
+      await switchToDemoNetwork();
+      const injected = await resolveMetaMaskProvider();
+      const provider = new BrowserProvider(injected);
+      const signer = await provider.getSigner();
+      if ((await provider.getBalance(address)) === 0n) {
+        throw new Error(
+          "Base Sepolia ETH is required to deploy test USD₮. Fund this wallet from a faucet first.",
+        );
+      }
+      const artifactsResponse = await fetch(`${API_BASE}/demo/artifacts`, {
+        cache: "no-store",
+      });
+      const artifacts = (await artifactsResponse.json()) as
+        DeploymentArtifacts | { error?: string };
+      if (!artifactsResponse.ok || !("token" in artifacts)) {
+        throw new Error("Test USD₮ contract artifact is unavailable");
+      }
+      const tokenFactory = new ContractFactory(
+        artifacts.token.abi,
+        artifacts.token.bytecode,
+        signer,
+      );
+      const deployment =
+        (await findExistingTestToken(provider, address, artifacts.token)) ??
+        (await deployRecoverably(provider, address, tokenFactory, []));
+      const token = new Contract(deployment.address, erc20Abi, signer);
+      const mint = await token.getFunction("mint")(
+        address,
+        TEST_USDT_FAUCET_AMOUNT,
+      );
+      await mint.wait();
+
+      const response = await fetch(`${API_BASE}/demo/token/adopt`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          deployerAddress: address,
+          tokenAddress: deployment.address,
+          tokenDeployTxHash: deployment.transactionHash,
+          mintTxHash: mint.hash,
+        }),
+      });
+      const result = (await response.json()) as DemoState & { error?: string };
+      if (!response.ok) {
+        throw new Error(result.error ?? "Test USD₮ deployment was rejected");
+      }
+      setState(result);
+      setBackendOnline(true);
+      await refreshWallet(address, result);
+      await injected.request({
+        method: "wallet_watchAsset",
+        params: {
+          type: "ERC20",
+          options: {
+            address: deployment.address,
+            symbol: "USDT",
+            decimals: 6,
+          },
+        },
+      });
+    } catch (deploymentError) {
+      setError(
+        readableWalletError(deploymentError, "Test USD₮ deployment failed"),
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const mintTestUsdt = async () => {
-    if (!state.contracts?.token || !walletAddress) {
-      setError("Connect MetaMask and deploy a deal before using the faucet");
+    const address = walletAddress ?? (await connectWallet());
+    if (!address) return;
+    if (!tokenAddress) {
+      setError("Deploy test USD₮ before using the faucet");
       return;
     }
     setBusy("faucet");
@@ -1410,13 +1500,13 @@ export default function HomePage() {
       const injected = await resolveMetaMaskProvider();
       const provider = new BrowserProvider(injected);
       const signer = await provider.getSigner();
-      const token = new Contract(state.contracts.token, erc20Abi, signer);
+      const token = new Contract(tokenAddress, erc20Abi, signer);
       const transaction = await token.getFunction("mint")(
-        walletAddress,
+        address,
         TEST_USDT_FAUCET_AMOUNT,
       );
       await transaction.wait();
-      await refreshWallet(walletAddress);
+      await refreshWallet(address);
       await loadState();
     } catch (faucetError) {
       setError(readableWalletError(faucetError, "Test USDt faucet failed"));
@@ -1426,8 +1516,8 @@ export default function HomePage() {
   };
 
   const addTestUsdtToMetaMask = async () => {
-    if (!state.contracts?.token) {
-      setError("Deploy a deal before adding its test token to MetaMask");
+    if (!tokenAddress) {
+      setError("Deploy test USD₮ before adding it to MetaMask");
       return;
     }
     setBusy("token-import");
@@ -1440,7 +1530,7 @@ export default function HomePage() {
         params: {
           type: "ERC20",
           options: {
-            address: state.contracts.token,
+            address: tokenAddress,
             symbol: "USDT",
             decimals: 6,
           },
@@ -1556,7 +1646,7 @@ export default function HomePage() {
             explorerUrl={state.network?.explorerUrl}
             eth={walletEth}
             usdtBalance={walletUsdt}
-            tokenAddress={state.contracts?.token}
+            tokenAddress={tokenAddress}
             dealBuyer={state.authorization?.buyer}
             busy={busy}
             backendOnline={backendOnline}
@@ -1564,7 +1654,7 @@ export default function HomePage() {
             onSwitch={() => void switchToDemoNetwork()}
             onFaucet={() => void mintTestUsdt()}
             onImportToken={() => void addTestUsdtToMetaMask()}
-            onOpenPlayers={() => goTo("players")}
+            onDeployToken={() => void deployTestUsdt()}
           />
           {activeTab === "overview" && (
             <Overview state={state} completed={completed} onNavigate={goTo} />
@@ -1673,7 +1763,7 @@ function WalletDock(props: {
   onSwitch: () => void;
   onFaucet: () => void;
   onImportToken: () => void;
-  onOpenPlayers: () => void;
+  onDeployToken: () => void;
 }) {
   const correctNetwork = props.chainId === props.expectedChainId;
   const correctBuyer =
@@ -1739,8 +1829,10 @@ function WalletDock(props: {
         ) : !correctNetwork ? (
           <button onClick={props.onSwitch}>Switch network</button>
         ) : !props.tokenAddress ? (
-          <button onClick={props.onOpenPlayers}>
-            Deploy token via a deal →
+          <button onClick={props.onDeployToken} disabled={props.busy !== null}>
+            {props.busy === "token-deploy"
+              ? "Deploying + minting…"
+              : "Deploy + get 50,000 test USD₮"}
           </button>
         ) : (
           <div className="wallet-action-buttons">

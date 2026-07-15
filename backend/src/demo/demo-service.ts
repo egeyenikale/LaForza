@@ -103,6 +103,20 @@ export type ExternalDeploymentInput = {
   mintTxHash?: string;
 };
 
+export type AdoptTestTokenInput = {
+  deployerAddress: string;
+  tokenAddress: string;
+  tokenDeployTxHash: string;
+  mintTxHash: string;
+};
+
+type TestTokenRecord = {
+  address: string;
+  deployer: string;
+  transactionHash: string;
+  createdAt: string;
+};
+
 export type RegisterCounterpartyInput = {
   requestId: string;
   name: string;
@@ -359,6 +373,74 @@ export class DemoService {
     return { token, escrow };
   }
 
+  async adoptTestToken(
+    input: AdoptTestTokenInput,
+  ): Promise<Record<string, unknown>> {
+    if (this.config.CHAIN_ID !== 84532) {
+      throw new Error("Standalone test USDt deployment is Base Sepolia only");
+    }
+    const deployer = getAddress(input.deployerAddress);
+    const tokenAddress = getAddress(input.tokenAddress);
+    const tokenArtifact = await this.#readArtifact(
+      "contracts/test/MockUSDT.sol/MockUSDT.json",
+    );
+    const token = new Contract(tokenAddress, tokenArtifact.abi, this.#provider);
+    const [code, decimals, deploymentReceipt, mintReceipt, balance] =
+      await Promise.all([
+        this.#provider.getCode(tokenAddress),
+        token.getFunction("decimals")(),
+        this.#wait(input.tokenDeployTxHash),
+        this.#wait(input.mintTxHash),
+        token.getFunction("balanceOf")(deployer),
+      ]);
+    if (
+      code === "0x" ||
+      keccak256(code) !== keccak256(tokenArtifact.deployedBytecode)
+    ) {
+      throw new Error("Test USDt runtime does not match the La Forza artifact");
+    }
+    if (BigInt(decimals) !== 6n) {
+      throw new Error("Test USDt must use six decimals");
+    }
+    if (
+      deploymentReceipt.from.toLowerCase() !== deployer.toLowerCase() ||
+      !deploymentReceipt.contractAddress ||
+      getAddress(deploymentReceipt.contractAddress) !== tokenAddress
+    ) {
+      throw new Error("Token deployment receipt does not match this wallet");
+    }
+    if (!mintReceipt.to || getAddress(mintReceipt.to) !== tokenAddress) {
+      throw new Error("Mint transaction does not target test USDt");
+    }
+    if (BigInt(balance) < 50_000n * USDT) {
+      throw new Error("The connected wallet did not receive 50,000 test USDt");
+    }
+
+    const record: TestTokenRecord = {
+      address: tokenAddress,
+      deployer,
+      transactionHash: input.tokenDeployTxHash,
+      createdAt: new Date().toISOString(),
+    };
+    await this.#storage.withLock("test-token", async () => {
+      const existing = await this.#loadTestToken();
+      if (existing && existing.address !== tokenAddress) {
+        throw new Error(
+          `La Forza already uses test USDt at ${existing.address}`,
+        );
+      }
+      await this.#storage.write("test-token", JSON.stringify(record));
+    });
+    await this.#events.append("TEST_USDT_DEPLOYED", {
+      tokenAddress,
+      deployer,
+      tokenDeployTxHash: input.tokenDeployTxHash,
+      mintTxHash: input.mintTxHash,
+      amountMicroUsdt: jsonBigInt(50_000n * USDT),
+    });
+    return this.state();
+  }
+
   async adoptExternalDeployment(
     passkey: string,
     input: ExternalDeploymentInput,
@@ -485,16 +567,20 @@ export class DemoService {
         this.#wait(input.escrowDeployTxHash),
       ],
     );
-    const deploymentReceipts = [
-      ["Token deployment", tokenDeploymentReceipt],
-      ["Escrow deployment", escrowDeploymentReceipt],
-    ] as const;
-    for (const [label, receipt] of deploymentReceipts) {
-      if (receipt.from.toLowerCase() !== buyer.toLowerCase()) {
-        throw new Error(
-          `${label} came from ${receipt.from}; expected buyer ${buyer}`,
-        );
-      }
+    const sharedToken = await this.#loadTestToken();
+    const expectedTokenDeployer = sharedToken?.deployer ?? buyer;
+    if (
+      tokenDeploymentReceipt.from.toLowerCase() !==
+      expectedTokenDeployer.toLowerCase()
+    ) {
+      throw new Error(
+        `Token deployment came from ${tokenDeploymentReceipt.from}; expected ${expectedTokenDeployer}`,
+      );
+    }
+    if (escrowDeploymentReceipt.from.toLowerCase() !== buyer.toLowerCase()) {
+      throw new Error(
+        `Escrow deployment came from ${escrowDeploymentReceipt.from}; expected buyer ${buyer}`,
+      );
     }
     if (getAddress(tokenDeploymentReceipt.contractAddress!) !== tokenAddress) {
       throw new Error("Token deployment receipt does not match the token");
@@ -503,6 +589,21 @@ export class DemoService {
       getAddress(escrowDeploymentReceipt.contractAddress!) !== escrowAddress
     ) {
       throw new Error("Escrow deployment receipt does not match the escrow");
+    }
+
+    if (sharedToken && sharedToken.address !== tokenAddress) {
+      throw new Error("Escrow does not use the shared La Forza test USDt");
+    }
+    if (!sharedToken) {
+      await this.#storage.write(
+        "test-token",
+        JSON.stringify({
+          address: tokenAddress,
+          deployer: expectedTokenDeployer,
+          transactionHash: input.tokenDeployTxHash,
+          createdAt: new Date().toISOString(),
+        } satisfies TestTokenRecord),
+      );
     }
 
     if (input.verifierFundingTxHash) {
@@ -1052,10 +1153,11 @@ export class DemoService {
   }
 
   async state(): Promise<Record<string, unknown>> {
-    const [events, marketplace, runtime] = await Promise.all([
+    const [events, marketplace, runtime, testToken] = await Promise.all([
       this.#events.list(),
       this.#marketplace.read(),
       this.#loadRuntime(),
+      this.#loadTestToken(),
     ]);
     if (!runtime)
       return {
@@ -1065,6 +1167,7 @@ export class DemoService {
         offers: [],
         marketplace,
         events,
+        testToken,
       };
     const tokenArtifact = await this.#readArtifact(
       "contracts/test/MockUSDT.sol/MockUSDT.json",
@@ -1129,6 +1232,7 @@ export class DemoService {
         token: runtime.tokenAddress,
         escrow: runtime.escrowAddress,
       },
+      testToken,
       wallets: visibleWallets,
       players: demoPlayers,
       selectedPlayer: runtime.selectedPlayer,
@@ -1323,6 +1427,11 @@ export class DemoService {
     }
     this.#runtime = parseRuntime(content);
     return this.#runtime;
+  }
+
+  async #loadTestToken(): Promise<TestTokenRecord | undefined> {
+    const content = await this.#storage.read("test-token");
+    return content ? (JSON.parse(content) as TestTokenRecord) : undefined;
   }
 
   async #persistRuntime(runtime: DemoRuntime): Promise<void> {

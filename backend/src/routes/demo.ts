@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 
 import type {
+  AdoptTestTokenInput,
   DemoService,
   ExternalDeploymentInput,
   RegisterCounterpartyInput,
@@ -71,6 +72,13 @@ const externalDeploymentSchema = passkeySchema.extend({
   mintTxHash: transactionHashSchema.optional(),
 });
 
+const testTokenDeploymentSchema = z.object({
+  deployerAddress: addressSchema,
+  tokenAddress: addressSchema,
+  tokenDeployTxHash: transactionHashSchema,
+  mintTxHash: transactionHashSchema,
+});
+
 export const registerDemoRoutes: FastifyPluginAsync<{
   demoService: DemoService;
 }> = async (app, { demoService }) => {
@@ -79,6 +87,24 @@ export const registerDemoRoutes: FastifyPluginAsync<{
   app.get("/demo/state", async () => demoService.state());
   app.get("/demo/players", async () => ({ players: demoService.players() }));
   app.get("/demo/artifacts", async () => demoService.artifacts());
+
+  app.post("/demo/token/adopt", async (request, reply) => {
+    const parsed = testTokenDeploymentSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send(parsed.error.flatten());
+    try {
+      return await demoService.adoptTestToken(
+        parsed.data as AdoptTestTokenInput,
+      );
+    } catch (error) {
+      request.log.warn({ error }, "test USDt deployment rejected");
+      return reply.code(400).send({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Test USDt deployment rejected",
+      });
+    }
+  });
 
   app.post("/demo/marketplace/counterparties", async (request, reply) => {
     const parsed = counterpartySchema.safeParse(request.body);

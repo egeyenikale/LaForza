@@ -78,7 +78,9 @@ wallet must have Base Sepolia ETH before it can deploy the test token and escrow
 Do not configure a deployer private key in either Vercel project. Contract
 deployment deliberately happens from the connected buyer's MetaMask account:
 
-1. MetaMask deploys the six-decimal `MockUSDT` contract on Base Sepolia.
+1. MetaMask deploys the six-decimal `MockUSDT` contract on Base Sepolia. This
+   can happen directly from the wallet dock before a deal exists. The backend
+   validates the receipts and persists the shared token address in Redis.
 2. MetaMask deploys the versioned `DeadlineEscrow` for the selected player and
    exact buyer, seller, player, verifier, amount, and deadlines.
 3. The faucet calls the token's on-chain `mint` function. The minted balance is
