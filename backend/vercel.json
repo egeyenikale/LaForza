@@ -4,7 +4,7 @@
   "buildCommand": "npm run vercel-build",
   "functions": {
     "api/index.ts": {
-      "includeFiles": "{contract-artifacts/**,prebuilds/linux-x64/**}",
+      "includeFiles": "contract-artifacts/**",
       "maxDuration": 120
     }
   },
