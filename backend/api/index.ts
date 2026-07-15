@@ -1,16 +1,19 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { buildApp } from "../src/app.js";
-import { loadConfig } from "../src/config.js";
+let appPromise: Promise<Awaited<ReturnType<typeof importApp>>> | undefined;
 
-let appPromise: ReturnType<typeof createApp> | undefined;
+async function importApp() {
+  const [{ buildApp }, { loadConfig }] = await Promise.all([
+    import("../src/app.js"),
+    import("../src/config.js"),
+  ]);
+  const app = await buildApp(loadConfig());
+  await app.ready();
+  return app;
+}
 
 function createApp() {
-  return Promise.resolve().then(async () => {
-    const app = await buildApp(loadConfig());
-    await app.ready();
-    return app;
-  });
+  return importApp();
 }
 
 function getApp() {
