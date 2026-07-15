@@ -1,5 +1,8 @@
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
+
+const backendRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const configSchema = z.object({
   HOST: z.string().default("127.0.0.1"),
@@ -19,14 +22,7 @@ const configSchema = z.object({
   UPSTASH_REDIS_REST_TOKEN: z.string().min(20).optional(),
   KV_REST_API_URL: z.string().url().optional(),
   KV_REST_API_TOKEN: z.string().min(20).optional(),
-  CONTRACT_ARTIFACTS_DIR: z
-    .string()
-    .default(
-      resolve(
-        process.cwd(),
-        process.env.VERCEL ? "contract-artifacts" : "../contracts/artifacts",
-      ),
-    ),
+  CONTRACT_ARTIFACTS_DIR: z.string().optional(),
   WDK_VAULT_PASSPHRASE: z.string().min(12).default("laforza-local-demo"),
   LOCAL_DEPLOYER_PRIVATE_KEY: z
     .string()
@@ -36,12 +32,22 @@ const configSchema = z.object({
     ),
 });
 
-export type AppConfig = z.infer<typeof configSchema>;
+type ParsedAppConfig = z.infer<typeof configSchema>;
+
+export type AppConfig = Omit<ParsedAppConfig, "CONTRACT_ARTIFACTS_DIR"> & {
+  CONTRACT_ARTIFACTS_DIR: string;
+};
 
 export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
   const parsed = configSchema.parse(source);
   const config: AppConfig = {
     ...parsed,
+    CONTRACT_ARTIFACTS_DIR:
+      parsed.CONTRACT_ARTIFACTS_DIR ??
+      resolve(
+        backendRoot,
+        source.VERCEL ? "contract-artifacts" : "../contracts/artifacts",
+      ),
     ...(source.VERCEL
       ? { CHAIN_RPC_URL: "https://sepolia.base.org" }
       : undefined),

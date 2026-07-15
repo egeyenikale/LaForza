@@ -1,3 +1,6 @@
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
 import { loadConfig } from "./config.js";
@@ -40,6 +43,18 @@ describe("hosted configuration", () => {
     });
 
     expect(config.CHAIN_RPC_URL).toBe("https://sepolia.base.org");
+  });
+
+  it("resolves hosted contract artifacts from the backend bundle", () => {
+    const config = loadConfig({
+      ...hostedBaseConfig,
+      UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
+      UPSTASH_REDIS_REST_TOKEN: "a-token-with-at-least-twenty-characters",
+    });
+
+    expect(config.CONTRACT_ARTIFACTS_DIR).toBe(
+      resolve(dirname(fileURLToPath(import.meta.url)), "../contract-artifacts"),
+    );
   });
 
   it("accepts the Vercel KV aliases used by older Redis integrations", () => {
