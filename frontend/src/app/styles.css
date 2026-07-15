@@ -1330,19 +1330,6 @@ footer {
   display: flex;
   min-height: 880px;
 }
-.landing-logo-showcase {
-  align-self: center;
-  justify-self: end;
-  max-width: 620px;
-  position: relative;
-  width: 100%;
-}
-.landing-logo-showcase img {
-  display: block;
-  filter: drop-shadow(0 24px 32px rgba(0, 0, 0, 0.48));
-  height: auto;
-  width: 100%;
-}
 .landing-hero-content {
   align-items: center;
   display: grid;
@@ -1549,10 +1536,6 @@ footer {
     padding-bottom: 80px;
     padding-top: 145px;
   }
-  .landing-logo-showcase {
-    justify-self: center;
-    max-width: 720px;
-  }
 }
 
 @media (max-width: 680px) {
@@ -1570,9 +1553,6 @@ footer {
     font-size: clamp(46px, 14vw, 62px);
     line-height: 0.88;
     margin-bottom: 28px;
-  }
-  .landing-logo-showcase {
-    width: 100%;
   }
   h1 {
     font-size: 54px;

@@ -55,16 +55,6 @@ export default function LandingPage() {
               <span>EVM ESCROW RECEIPTS</span>
             </div>
           </div>
-          <div className="landing-logo-showcase">
-            <Image
-              alt="La Forza — Deals. Trust. Future."
-              height={560}
-              priority
-              sizes="(max-width: 680px) 92vw, (max-width: 1100px) 72vw, 42vw"
-              src="/images/laforza-logo-transparent.png"
-              width={798}
-            />
-          </div>
         </div>
       </section>
 
