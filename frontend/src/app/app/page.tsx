@@ -512,6 +512,19 @@ const LOCAL_CHAIN = {
   nativeCurrency: { name: "Test Ether", symbol: "ETH", decimals: 18 },
 };
 
+const BASE_SEPOLIA_CHAIN = {
+  chainId: BASE_SEPOLIA_CHAIN_ID,
+  chainHex: "0x14a34",
+  name: "Base Sepolia",
+  rpcUrl: "https://sepolia.base.org",
+  explorerUrl: "https://sepolia-explorer.base.org",
+  publicTestnet: true,
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+};
+
+const DEFAULT_CHAIN =
+  process.env.NODE_ENV === "production" ? BASE_SEPOLIA_CHAIN : LOCAL_CHAIN;
+
 const erc20Abi = [
   "function balanceOf(address account) view returns (uint256)",
   "function allowance(address owner, address spender) view returns (uint256)",
@@ -794,7 +807,7 @@ export default function HomePage() {
 
   const switchToDemoNetwork = useCallback(async () => {
     const injected = await resolveMetaMaskProvider();
-    const network = state.network ?? LOCAL_CHAIN;
+    const network = state.network ?? DEFAULT_CHAIN;
     const chainHex = `0x${network.chainId.toString(16)}`;
     try {
       await injected.request({
@@ -1654,8 +1667,8 @@ export default function HomePage() {
           <WalletDock
             address={walletAddress}
             chainId={walletChainId}
-            expectedChainId={state.network?.chainId ?? LOCAL_CHAIN.chainId}
-            networkName={state.network?.name ?? LOCAL_CHAIN.name}
+            expectedChainId={state.network?.chainId ?? DEFAULT_CHAIN.chainId}
+            networkName={state.network?.name ?? DEFAULT_CHAIN.name}
             publicTestnet={state.network?.publicTestnet ?? false}
             explorerUrl={state.network?.explorerUrl}
             eth={walletEth}

@@ -42,6 +42,9 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
   const parsed = configSchema.parse(source);
   const config: AppConfig = {
     ...parsed,
+    ...(source.VERCEL
+      ? { CHAIN_RPC_URL: "https://sepolia.base.org" }
+      : undefined),
     UPSTASH_REDIS_REST_URL:
       parsed.UPSTASH_REDIS_REST_URL ?? parsed.KV_REST_API_URL,
     UPSTASH_REDIS_REST_TOKEN:

@@ -31,6 +31,17 @@ describe("hosted configuration", () => {
     });
   });
 
+  it("never exposes a private RPC URL from a hosted deployment", () => {
+    const config = loadConfig({
+      ...hostedBaseConfig,
+      CHAIN_RPC_URL: "http://127.0.0.1:8545",
+      UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
+      UPSTASH_REDIS_REST_TOKEN: "a-token-with-at-least-twenty-characters",
+    });
+
+    expect(config.CHAIN_RPC_URL).toBe("https://sepolia.base.org");
+  });
+
   it("accepts the Vercel KV aliases used by older Redis integrations", () => {
     const config = loadConfig({
       ...hostedBaseConfig,
