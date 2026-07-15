@@ -878,8 +878,8 @@ export default function HomePage() {
             <Image
               alt="La Forza emblem"
               height={96}
-              src="/images/laforza-logo-green.png"
-              width={144}
+              src="/images/laforza-logo-transparent.png"
+              width={137}
             />
           </span>
           <span>LA FORZA</span>
@@ -911,8 +911,8 @@ export default function HomePage() {
               className="desk-brand-logo"
               height={180}
               priority
-              src="/images/laforza-logo-green.png"
-              width={270}
+              src="/images/laforza-logo-transparent.png"
+              width={257}
             />
             <span>LF / OPS</span>
             <strong>Transfer desk</strong>

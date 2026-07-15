@@ -10,8 +10,8 @@ export default function LandingPage() {
             <Image
               alt="La Forza emblem"
               height={96}
-              src="/images/laforza-logo-green.png"
-              width={144}
+              src="/images/laforza-logo-transparent.png"
+              width={137}
             />
           </span>
           <span>LA FORZA</span>
@@ -58,11 +58,11 @@ export default function LandingPage() {
           <div className="landing-logo-showcase">
             <Image
               alt="La Forza — Deals. Trust. Future."
-              height={1024}
+              height={560}
               priority
               sizes="(max-width: 680px) 92vw, (max-width: 1100px) 72vw, 42vw"
-              src="/images/laforza-logo-green.png"
-              width={1536}
+              src="/images/laforza-logo-transparent.png"
+              width={798}
             />
           </div>
         </div>

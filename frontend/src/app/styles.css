@@ -91,8 +91,8 @@ main {
   width: 34px;
 }
 .brand-logo-mark {
-  background: #34393c;
-  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: transparent;
+  border: 0;
   display: inline-block;
   height: 38px;
   overflow: hidden;
@@ -100,13 +100,14 @@ main {
   width: 38px;
 }
 .brand-logo-mark img {
+  filter: drop-shadow(0 0 3px rgba(255, 255, 255, 0.35));
   height: 96px;
   left: 50%;
   max-width: none;
   position: absolute;
   top: 50%;
   transform: translate(-50%, -39%);
-  width: 144px;
+  width: 137px;
 }
 .nav-links {
   display: flex;
@@ -286,7 +287,7 @@ h1 em {
   font-size: 20px;
 }
 .desk-brand-logo {
-  border: 1px solid rgba(11, 14, 11, 0.22);
+  border: 0;
   height: auto;
   margin: -8px 0 14px;
   width: 100%;
@@ -1331,17 +1332,14 @@ footer {
 }
 .landing-logo-showcase {
   align-self: center;
-  background: #3a3f42;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.38);
   justify-self: end;
-  max-width: 680px;
-  overflow: hidden;
+  max-width: 620px;
   position: relative;
   width: 100%;
 }
 .landing-logo-showcase img {
   display: block;
+  filter: drop-shadow(0 24px 32px rgba(0, 0, 0, 0.48));
   height: auto;
   width: 100%;
 }
