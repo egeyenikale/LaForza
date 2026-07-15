@@ -36,6 +36,10 @@ import { createStorage } from "../storage/create-storage.js";
 import type { StorageBackend } from "../storage/storage-backend.js";
 import { demoPlayers, playerById, type DemoPlayer } from "./player-catalog.js";
 import {
+  provesBuyerApproval,
+  provesEscrowFunding,
+} from "./transaction-proof.js";
+import {
   LocalWalletVault,
   type PublicWallet,
   type WalletRole,
@@ -1073,28 +1077,31 @@ export class DemoService {
     if (approvalTxHash) {
       const approvalReceipt = await this.#wait(approvalTxHash);
       if (
-        approvalReceipt.from.toLowerCase() !==
-        runtime.buyerAddress.toLowerCase()
+        !provesBuyerApproval(approvalReceipt.logs, {
+          token: runtime.tokenAddress,
+          buyer: runtime.buyerAddress,
+          escrow: runtime.escrowAddress,
+          minimumAmount: runtime.envelope.authorization.totalAmount,
+        })
       ) {
-        throw new Error("Approval transaction was not sent by the buyer");
-      }
-      if (
-        approvalReceipt.to?.toLowerCase() !== runtime.tokenAddress.toLowerCase()
-      ) {
-        throw new Error("Approval transaction does not target test USDt");
+        throw new Error(
+          "Approval transaction does not prove the buyer's escrow allowance",
+        );
       }
     }
     if (fundingTxHash) {
       const fundingReceipt = await this.#wait(fundingTxHash);
       if (
-        fundingReceipt.from.toLowerCase() !== runtime.buyerAddress.toLowerCase()
+        !provesEscrowFunding(fundingReceipt.logs, {
+          escrow: runtime.escrowAddress,
+          dealId: runtime.envelope.authorization.dealId,
+          buyer: runtime.buyerAddress,
+          amount: runtime.envelope.authorization.totalAmount,
+        })
       ) {
-        throw new Error("Funding transaction was not sent by the buyer");
-      }
-      if (
-        fundingReceipt.to?.toLowerCase() !== runtime.escrowAddress.toLowerCase()
-      ) {
-        throw new Error("Funding transaction does not target this escrow");
+        throw new Error(
+          "Funding transaction does not prove this buyer's escrow deposit",
+        );
       }
     }
     const escrowArtifact = await this.#readArtifact(
@@ -1454,9 +1461,7 @@ export class DemoService {
   async #loadTestToken(): Promise<TestTokenRecord | undefined> {
     const content = await this.#storage.read("test-token");
     if (content) return JSON.parse(content) as TestTokenRecord;
-    return this.config.CHAIN_ID === 84532
-      ? BASE_SEPOLIA_TEST_TOKEN
-      : undefined;
+    return this.config.CHAIN_ID === 84532 ? BASE_SEPOLIA_TEST_TOKEN : undefined;
   }
 
   async #persistRuntime(runtime: DemoRuntime): Promise<void> {

@@ -24,8 +24,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/backend/api/v1";
 const TEST_USDT_UNIT = 1_000_000n;
 const TEST_USDT_FAUCET_AMOUNT = 50_000n * TEST_USDT_UNIT;
 const BASE_SEPOLIA_CHAIN_ID = 84532;
-const BASE_SEPOLIA_TEST_TOKEN =
-  "0xEb1A4eee8C8E7f0429e1F0A2AC33584D0A6124b4";
+const BASE_SEPOLIA_TEST_TOKEN = "0xEb1A4eee8C8E7f0429e1F0A2AC33584D0A6124b4";
 
 type Tab = "overview" | "players" | "offers" | "deal" | "ledger" | "about";
 
@@ -266,6 +265,9 @@ const readableWalletError = (error: unknown, fallback: string) => {
     fallback;
   if (message.includes("reading 'length'")) {
     return "MetaMask returned an ambiguous deployment response. The transaction may still have been mined; wait a few seconds and retry so La Forza can recover it from Base Sepolia.";
+  }
+  if (message.includes("RPC endpoint returned too many errors")) {
+    return "Base Sepolia's official RPC endpoint is temporarily rate-limited. Wait 30 seconds, then retry.";
   }
   return message;
 };

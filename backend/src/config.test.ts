@@ -40,8 +40,7 @@ describe("hosted configuration", () => {
 
     expect(config).toMatchObject({
       UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
-      UPSTASH_REDIS_REST_TOKEN:
-        "a-token-with-at-least-twenty-characters",
+      UPSTASH_REDIS_REST_TOKEN: "a-token-with-at-least-twenty-characters",
     });
   });
 });
