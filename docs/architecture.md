@@ -61,7 +61,10 @@ submission proof and is not represented in the UI.
 
 ## Deployment boundary
 
-The judge path is a deterministic local Hardhat chain using a six-decimal
-`MockUSDT`. The local deployer key is public test material. Moving to a testnet
-requires explicit RPC, funded test gas, deployed token addresses, a deployment
-record, and separate operational review; none of that is implied by this demo.
+The deterministic judge path uses local Hardhat and six-decimal `MockUSDT`.
+`npm run demo:testnet` targets Base Sepolia (`84532`). In public mode the
+MetaMask buyer deploys both contracts, funds the WDK verifier with test ETH, and
+mints demo USD₮; the backend adopts the deal only after independently reading
+the contract actors, amounts, milestone root, deadlines, authorization digest,
+deployment receipts, mint receipt, and verifier funding receipt from the public
+chain. No external deployer key is required.

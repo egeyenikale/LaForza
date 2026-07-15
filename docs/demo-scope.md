@@ -13,6 +13,12 @@ Approve the prompt to add/switch to **LaForza Local EVM** (`31337`). Enter the
 select **Start this deal**. The connected address becomes the buyer and receives
 local test gas plus 2,000 six-decimal test USD₮.
 
+For public explorer-verifiable records, start with `npm run demo:testnet`
+instead. MetaMask switches to Base Sepolia (`84532`) and the connected account
+deploys the test token plus escrow itself. This requires faucet-funded Base
+Sepolia ETH. The resulting contract and transaction links remain visible on the
+public explorer.
+
 ## Seven visible proofs
 
 1. **Try 1,100 USD₮** — WDK reports `DENY` and the `deny-over-budget` rule.
@@ -51,6 +57,9 @@ Released      900 test USD₮
 - A cloud custodian or hosted signing service
 - Pears and QVAC track claims
 - More than one verifier/evidence design
+
+Public mode uses La Forza's mintable six-decimal demo token. It is not an
+official Tether deployment and must never be represented as one.
 
 ## Automated external-wallet verification
 

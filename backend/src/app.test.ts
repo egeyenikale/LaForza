@@ -50,4 +50,29 @@ describe("backend", () => {
       currentClub: "Bosphorus United",
     });
   });
+
+  it("advertises the configured public Base Sepolia network before a deal exists", async () => {
+    const app = await buildApp({
+      ...config,
+      CHAIN_RPC_URL: "https://sepolia.base.org",
+      CHAIN_ID: 84532,
+      DATA_DIR: "/tmp/laforza-base-test",
+    });
+    apps.push(app);
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/demo/state",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      initialized: false,
+      network: {
+        name: "Base Sepolia",
+        chainId: 84532,
+        publicTestnet: true,
+        explorerUrl: "https://sepolia-explorer.base.org",
+      },
+    });
+  });
 });

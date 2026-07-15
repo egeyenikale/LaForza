@@ -15,6 +15,7 @@
     "dev:frontend": "npm run dev --workspace @laforza/frontend",
     "dev:backend": "npm run dev --workspace @laforza/backend",
     "demo": "npm run build --workspace @laforza/domain && npm run build --workspace @laforza/protocol && npm run build --workspace @laforza/contracts && concurrently --kill-others -n chain,api,web -c yellow,cyan,green \"npm run node --workspace @laforza/contracts\" \"wait-on tcp:127.0.0.1:8545 && npm run dev:backend\" \"wait-on http-get://127.0.0.1:4000/health && npm run dev:frontend\"",
+    "demo:testnet": "npm run build --workspace @laforza/domain && npm run build --workspace @laforza/protocol && npm run build --workspace @laforza/contracts && concurrently --kill-others -n api,web -c cyan,green \"CHAIN_RPC_URL=https://sepolia.base.org CHAIN_ID=84532 DATA_DIR=../.data-base npm run dev:backend\" \"wait-on http-get://127.0.0.1:4000/health && npm run dev:frontend\"",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "npm run test --workspace @laforza/domain && npm run test --workspace @laforza/protocol && npm run test --workspace @laforza/contracts && npm run test --workspace @laforza/backend",

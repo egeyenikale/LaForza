@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 
-import { Contract, JsonRpcProvider, NonceManager, Wallet } from "ethers";
+import {
+  AbiCoder,
+  Contract,
+  ContractFactory,
+  id,
+  JsonRpcProvider,
+  keccak256,
+  NonceManager,
+  parseEther,
+  Wallet,
+} from "ethers";
 
 const API = process.env.API_BASE ?? "http://127.0.0.1:4000/api/v1";
 const RPC = process.env.RPC_URL ?? "http://127.0.0.1:8545";
@@ -31,10 +41,86 @@ const buyerWallet = new Wallet(TEST_BUYER_PRIVATE_KEY, provider);
 const buyer = new NonceManager(buyerWallet);
 const buyerAddress = await buyer.getAddress();
 
-let state = await post("bootstrap", {
+const prepared = await post("participants", {
   passkey: PASSKEY,
   playerId: "mert-kaya",
   buyerAddress,
+});
+const artifactsResponse = await fetch(`${API}/demo/artifacts`);
+assert.equal(artifactsResponse.ok, true);
+const artifacts = await artifactsResponse.json();
+
+const tokenFactory = new ContractFactory(
+  artifacts.token.abi,
+  artifacts.token.bytecode,
+  buyer,
+);
+const deployedToken = await tokenFactory.deploy();
+const tokenDeployment = deployedToken.deploymentTransaction();
+assert.ok(tokenDeployment);
+await deployedToken.waitForDeployment();
+const tokenAddress = await deployedToken.getAddress();
+
+const latestBlock = await provider.getBlock("latest");
+assert.ok(latestBlock);
+const fundingDeadline = BigInt(latestBlock.timestamp + 2 * 60 * 60);
+const settlementDeadline = BigInt(latestBlock.timestamp + 24 * 60 * 60);
+const milestone = {
+  id: prepared.terms.milestoneId,
+  threshold: 1n,
+  amount: BigInt(prepared.terms.milestoneAmountMicroUsdt),
+  beneficiary: prepared.participants.seller,
+};
+const milestoneRoot = keccak256(
+  AbiCoder.defaultAbiCoder().encode(
+    ["tuple(bytes32 id,uint64 threshold,uint128 amount,address beneficiary)[]"],
+    [[milestone]],
+  ),
+);
+const escrowFactory = new ContractFactory(
+  artifacts.escrow.abi,
+  artifacts.escrow.bytecode,
+  buyer,
+);
+const deployedEscrow = await escrowFactory.deploy(
+  tokenAddress,
+  buyerAddress,
+  prepared.participants.seller,
+  prepared.participants.player,
+  prepared.participants.verifier,
+  id(`laforza-mert-kaya-${buyerAddress}-${latestBlock.timestamp}`),
+  BigInt(prepared.terms.totalAmountMicroUsdt),
+  BigInt(prepared.terms.signingBonusMicroUsdt),
+  fundingDeadline,
+  settlementDeadline,
+  [milestone],
+);
+const escrowDeployment = deployedEscrow.deploymentTransaction();
+assert.ok(escrowDeployment);
+await deployedEscrow.waitForDeployment();
+const escrowAddress = await deployedEscrow.getAddress();
+
+const verifierFunding = await buyer.sendTransaction({
+  to: prepared.participants.verifier,
+  value: parseEther("0.0001"),
+});
+await verifierFunding.wait();
+const initialMint = await deployedToken.getFunction("mint")(
+  buyerAddress,
+  2_000n * 1_000_000n,
+);
+await initialMint.wait();
+
+let state = await post("adopt", {
+  passkey: PASSKEY,
+  playerId: "mert-kaya",
+  buyerAddress,
+  tokenAddress,
+  escrowAddress,
+  tokenDeployTxHash: tokenDeployment.hash,
+  escrowDeployTxHash: escrowDeployment.hash,
+  verifierFundingTxHash: verifierFunding.hash,
+  mintTxHash: initialMint.hash,
 });
 assert.equal(state.custodyMode, "METAMASK");
 assert.equal(

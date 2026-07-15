@@ -37,6 +37,15 @@ main {
   min-height: 100vh;
   overflow: hidden;
 }
+.app-page {
+  border-top: 10px solid var(--green);
+}
+.app-page .nav {
+  position: relative;
+}
+.app-page .wallet-dock {
+  margin-top: 0;
+}
 
 .nav {
   align-items: center;

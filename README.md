@@ -18,7 +18,8 @@ npm run demo
 
 Open [http://localhost:3000](http://localhost:3000). The root route is the
 standalone landing page; **Try Demo** opens the working application at
-[http://localhost:3000/app](http://localhost:3000/app). The command starts:
+[http://localhost:3000/app](http://localhost:3000/app). `/app` opens directly on
+the Transfer Desk; it does not repeat the grass landing hero. The command starts:
 
 - a local Hardhat EVM chain on `127.0.0.1:8545`;
 - the Fastify API on `127.0.0.1:4000`;
@@ -28,6 +29,19 @@ The application requires the MetaMask browser extension. It adds/switches to the
 local EVM chain (`31337`) through the standard EIP-1193 prompt. The connected
 address becomes the escrow buyer and receives local test ETH plus 2,000 test
 USD₮ when a deal is deployed.
+
+### Public Base Sepolia mode
+
+```bash
+npm run demo:testnet
+```
+
+This starts Fastify and Next.js against the official Base Sepolia RPC (chain
+`84532`). The connected MetaMask account deploys both `MockUSDT` and
+`DeadlineEscrow`, funds the WDK verifier with test gas, and mints 2,000
+six-decimal La Forza test USD₮. Contract and transaction links open on the Base
+Sepolia explorer. The account must already hold Base Sepolia ETH from a faucet.
+No deployer private key is requested or stored by La Forza.
 
 The `/app` route is split into six working areas:
 
@@ -41,8 +55,9 @@ The `/app` route is split into six working areas:
 Connect MetaMask, select a player, and click the seven deal-room actions in order.
 They demonstrate a policy rejection, a human approval boundary, a real MetaMask
 EIP-712 buyer signature, WDK counterparty signatures, MetaMask ERC-20 approval and
-escrow funding, and WDK verifier-only milestone release. Every amount is local
-**test USD₮**; there are no real funds.
+escrow funding, and WDK verifier-only milestone release. Every amount is
+**test USD₮** with no real value. Public mode creates persistent Base Sepolia
+records, but the token is not issued or endorsed by Tether.
 
 ## Why this is a real WDK entry
 
@@ -94,8 +109,9 @@ same external EVM signature/approve/fund path used by MetaMask against Hardhat.
 
 ## Safety boundary
 
-This is a local-chain hackathon prototype, not a FIFA transfer registry, legal
-contract service, custody provider, or production payment system. The checked-in
-Hardhat deployer key is public test material and must never receive real assets.
+This is a hackathon prototype, not a FIFA transfer registry, legal contract
+service, custody provider, or production payment system. The local mode's
+checked-in Hardhat deployer key is public test material and must never receive
+real assets. Base Sepolia mode creates public testnet records only.
 
 See [the architecture](docs/architecture.md) and [demo runbook](docs/demo-scope.md).

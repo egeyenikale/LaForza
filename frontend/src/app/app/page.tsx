@@ -1,10 +1,16 @@
 "use client";
 
 import {
+  AbiCoder,
   BrowserProvider,
   Contract,
+  ContractFactory,
   formatEther,
+  id,
+  keccak256,
+  parseEther,
   type Eip1193Provider,
+  type InterfaceAbi,
 } from "ethers";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -59,6 +65,8 @@ type DemoState = {
     name: string;
     chainId: number;
     rpcUrl: string;
+    explorerUrl: string | null;
+    publicTestnet: boolean;
     nativeCurrency: { name: string; symbol: string; decimals: number };
     disclaimer: string;
   };
@@ -105,6 +113,21 @@ type DemoState = {
   events: DemoEvent[];
 };
 
+type DeploymentArtifacts = {
+  token: { abi: InterfaceAbi; bytecode: string };
+  escrow: { abi: InterfaceAbi; bytecode: string };
+};
+
+type PreparedParticipants = {
+  participants: { seller: string; player: string; verifier: string };
+  terms: {
+    totalAmountMicroUsdt: string;
+    signingBonusMicroUsdt: string;
+    milestoneAmountMicroUsdt: string;
+    milestoneId: string;
+  };
+};
+
 type InjectedProvider = Eip1193Provider & {
   on?: (event: string, listener: (...args: unknown[]) => void) => void;
   removeListener?: (
@@ -124,6 +147,8 @@ const LOCAL_CHAIN = {
   chainHex: "0x7a69",
   name: "LaForza Local EVM",
   rpcUrl: "http://127.0.0.1:8545",
+  explorerUrl: null,
+  publicTestnet: false,
   nativeCurrency: { name: "Test Ether", symbol: "ETH", decimals: 18 },
 };
 
@@ -251,6 +276,15 @@ function words(value: string): string {
     .replace(/^./, (letter) => letter.toUpperCase());
 }
 
+function explorerHref(
+  explorerUrl: string | null | undefined,
+  kind: "address" | "tx",
+  value: string | undefined,
+): string | undefined {
+  if (!explorerUrl || !value) return undefined;
+  return `${explorerUrl}/${kind}/${value}`;
+}
+
 export default function HomePage() {
   const [state, setState] = useState<DemoState>({
     initialized: false,
@@ -336,6 +370,9 @@ export default function HomePage() {
             chainName: network.name,
             rpcUrls: [network.rpcUrl],
             nativeCurrency: network.nativeCurrency,
+            ...(network.explorerUrl
+              ? { blockExplorerUrls: [network.explorerUrl] }
+              : {}),
           },
         ],
       });
@@ -423,10 +460,159 @@ export default function HomePage() {
     }
   };
 
+  const deployPublicTestnetDeal = async (address: string) => {
+    if (!state.network?.publicTestnet) {
+      throw new Error("Public testnet mode is not active");
+    }
+    if (!window.ethereum) throw new Error("MetaMask extension was not found");
+    setBusy("public-deploy");
+    setError(null);
+    try {
+      await switchToDemoNetwork();
+      const provider = new BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      const balance = await provider.getBalance(address);
+      if (balance === 0n) {
+        throw new Error(
+          "Base Sepolia ETH is required for deployment. Fund this address from a Base Sepolia faucet first.",
+        );
+      }
+
+      const [participantsResponse, artifactsResponse] = await Promise.all([
+        fetch(`${API_BASE}/demo/participants`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            passkey,
+            playerId: selectedPlayerId,
+            buyerAddress: address,
+          }),
+        }),
+        fetch(`${API_BASE}/demo/artifacts`, { cache: "no-store" }),
+      ]);
+      const participants = (await participantsResponse.json()) as
+        PreparedParticipants | { error?: string };
+      const artifacts = (await artifactsResponse.json()) as
+        DeploymentArtifacts | { error?: string };
+      if (!participantsResponse.ok) {
+        throw new Error(
+          "error" in participants
+            ? (participants.error ?? "Participant preparation failed")
+            : "Participant preparation failed",
+        );
+      }
+      if (!artifactsResponse.ok || !("token" in artifacts)) {
+        throw new Error("Contract artifacts are unavailable");
+      }
+      const prepared = participants as PreparedParticipants;
+
+      const tokenFactory = new ContractFactory(
+        artifacts.token.abi,
+        artifacts.token.bytecode,
+        signer,
+      );
+      const token = await tokenFactory.deploy();
+      const tokenDeployment = token.deploymentTransaction();
+      if (!tokenDeployment) throw new Error("Token deployment was not sent");
+      await token.waitForDeployment();
+      const tokenAddress = await token.getAddress();
+
+      const latestBlock = await provider.getBlock("latest");
+      if (!latestBlock) throw new Error("Could not read the testnet clock");
+      const fundingDeadline = BigInt(latestBlock.timestamp + 2 * 60 * 60);
+      const settlementDeadline = BigInt(latestBlock.timestamp + 24 * 60 * 60);
+      const milestone = {
+        id: prepared.terms.milestoneId,
+        threshold: 1n,
+        amount: BigInt(prepared.terms.milestoneAmountMicroUsdt),
+        beneficiary: prepared.participants.seller,
+      };
+      const milestoneRoot = keccak256(
+        AbiCoder.defaultAbiCoder().encode(
+          [
+            "tuple(bytes32 id,uint64 threshold,uint128 amount,address beneficiary)[]",
+          ],
+          [[milestone]],
+        ),
+      );
+      const dealId = id(
+        `laforza-${selectedPlayerId}-${address}-${latestBlock.timestamp}`,
+      );
+      const escrowFactory = new ContractFactory(
+        artifacts.escrow.abi,
+        artifacts.escrow.bytecode,
+        signer,
+      );
+      const escrow = await escrowFactory.deploy(
+        tokenAddress,
+        address,
+        prepared.participants.seller,
+        prepared.participants.player,
+        prepared.participants.verifier,
+        dealId,
+        BigInt(prepared.terms.totalAmountMicroUsdt),
+        BigInt(prepared.terms.signingBonusMicroUsdt),
+        fundingDeadline,
+        settlementDeadline,
+        [milestone],
+      );
+      const escrowDeployment = escrow.deploymentTransaction();
+      if (!escrowDeployment) throw new Error("Escrow deployment was not sent");
+      await escrow.waitForDeployment();
+      const escrowAddress = await escrow.getAddress();
+
+      const verifierFunding = await signer.sendTransaction({
+        to: prepared.participants.verifier,
+        value: parseEther("0.0001"),
+      });
+      await verifierFunding.wait();
+      const mint = await token.getFunction("mint")(
+        address,
+        2_000n * 1_000_000n,
+      );
+      await mint.wait();
+
+      const response = await fetch(`${API_BASE}/demo/adopt`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          passkey,
+          playerId: selectedPlayerId,
+          buyerAddress: address,
+          tokenAddress,
+          escrowAddress,
+          tokenDeployTxHash: tokenDeployment.hash,
+          escrowDeployTxHash: escrowDeployment.hash,
+          verifierFundingTxHash: verifierFunding.hash,
+          mintTxHash: mint.hash,
+        }),
+      });
+      const result = (await response.json()) as DemoState & { error?: string };
+      if (!response.ok) {
+        throw new Error(result.error ?? "Testnet deployment validation failed");
+      }
+      setState(result);
+      setBackendOnline(true);
+      await refreshWallet(address, result);
+    } catch (deploymentError) {
+      setError(
+        deploymentError instanceof Error
+          ? deploymentError.message
+          : "Public testnet deployment failed",
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const startMetamaskDeal = async () => {
     const address = walletAddress ?? (await connectWallet());
     if (!address) return;
     await switchToDemoNetwork();
+    if (state.network?.publicTestnet) {
+      await deployPublicTestnetDeal(address);
+      return;
+    }
     const result = await runAction("bootstrap", "bootstrap", {
       playerId: selectedPlayerId,
       buyerAddress: address,
@@ -637,49 +823,6 @@ export default function HomePage() {
         </button>
       </nav>
 
-      <section className="hero" id="top">
-        <div className="hero-shade" />
-        <div className="hero-content">
-          <div className="eyebrow">LIVE APP / METAMASK + TETHER WDK</div>
-          <h1>
-            Control the deal.
-            <br />
-            <em>Sign the settlement.</em>
-          </h1>
-          <p className="hero-copy">
-            This is the working application. Connect MetaMask, select a player,
-            sign the exact EIP-712 terms, then approve and fund the escrow with
-            six-decimal test USD₮.
-          </p>
-          <div className="actions">
-            <button className="primary-button" onClick={() => goTo("players")}>
-              Start in the shortlist <span>↘</span>
-            </button>
-            <button
-              className="text-link link-button"
-              onClick={() => goTo("about")}
-            >
-              Product & architecture
-            </button>
-          </div>
-          <div className="hero-proof">
-            <span>{state.players?.length ?? 4} / SCOUTED PLAYERS</span>
-            <span>{state.offers?.length ?? 0} / OFFER RECORDS</span>
-            <span>{completed} / 7 DEAL PROOFS</span>
-          </div>
-        </div>
-      </section>
-
-      <section className="ticker" aria-label="Product summary">
-        <span>PLAYER DISCOVERY</span>
-        <i>✦</i>
-        <span>OFFER CONTROL</span>
-        <i>✦</i>
-        <span>SELF-CUSTODY</span>
-        <i>✦</i>
-        <span>PROGRAMMABLE TEST USD₮</span>
-      </section>
-
       <section className="workspace" id="workspace">
         <aside className="workspace-tabs" aria-label="Application sections">
           <div className="workspace-title">
@@ -711,6 +854,9 @@ export default function HomePage() {
             address={walletAddress}
             chainId={walletChainId}
             expectedChainId={state.network?.chainId ?? LOCAL_CHAIN.chainId}
+            networkName={state.network?.name ?? LOCAL_CHAIN.name}
+            publicTestnet={state.network?.publicTestnet ?? false}
+            explorerUrl={state.network?.explorerUrl}
             eth={walletEth}
             usdtBalance={walletUsdt}
             tokenAddress={state.contracts?.token}
@@ -794,7 +940,11 @@ export default function HomePage() {
 
       <footer>
         <span>LA FORZA / TETHER DEVELOPERS CUP</span>
-        <span>LOCAL TEST ASSETS ONLY · NO REAL FUNDS</span>
+        <span>
+          {state.network?.publicTestnet
+            ? "BASE SEPOLIA RECORDS · DEMO USD₮ · NO REAL VALUE"
+            : "LOCAL TEST ASSETS ONLY · NO REAL FUNDS"}
+        </span>
       </footer>
     </main>
   );
@@ -804,6 +954,9 @@ function WalletDock(props: {
   address: string | null;
   chainId: number | null;
   expectedChainId: number;
+  networkName: string;
+  publicTestnet: boolean;
+  explorerUrl: string | null | undefined;
   eth: string;
   usdtBalance: string;
   tokenAddress: string | undefined;
@@ -827,22 +980,39 @@ function WalletDock(props: {
           {props.address ? "MetaMask connected" : "Connect a real EVM wallet"}
         </strong>
         <small>
-          {props.address
-            ? shortHex(props.address, 10)
-            : "Your account will be written into the escrow as the buyer."}
+          {props.address ? (
+            explorerHref(props.explorerUrl, "address", props.address) ? (
+              <a
+                href={explorerHref(props.explorerUrl, "address", props.address)}
+                rel="noreferrer"
+                target="_blank"
+              >
+                {shortHex(props.address, 10)} ↗
+              </a>
+            ) : (
+              shortHex(props.address, 10)
+            )
+          ) : (
+            "Your account will be written into the escrow as the buyer."
+          )}
         </small>
       </div>
       <div className="wallet-stat">
         <span>NETWORK</span>
         <strong className={correctNetwork ? "ok" : "warn"}>
-          {props.chainId ? `Chain ${props.chainId}` : "Not connected"}
+          {props.chainId ? props.networkName : "Not connected"}
         </strong>
-        <small>Expected {props.expectedChainId}</small>
+        <small>
+          Expected {props.expectedChainId} ·{" "}
+          {props.publicTestnet ? "PUBLIC TESTNET" : "LOCAL"}
+        </small>
       </div>
       <div className="wallet-stat">
         <span>GAS</span>
         <strong>{props.eth} ETH</strong>
-        <small>Local test gas</small>
+        <small>
+          {props.publicTestnet ? "Public testnet gas" : "Local test gas"}
+        </small>
       </div>
       <div className="wallet-stat">
         <span>TEST USD₮</span>
@@ -870,7 +1040,9 @@ function WalletDock(props: {
           </button>
         )}
         <small className={props.backendOnline ? "ok" : "warn"}>
-          {props.backendOnline ? "● LOCAL EVM ONLINE" : "● BACKEND OFFLINE"}
+          {props.backendOnline
+            ? `● ${props.publicTestnet ? "BASE SEPOLIA" : "LOCAL EVM"} ONLINE`
+            : "● BACKEND OFFLINE"}
         </small>
       </div>
       {!correctBuyer ? (
@@ -1111,7 +1283,7 @@ function PlayersPanel(props: {
             }
             onClick={props.onStart}
           >
-            {props.busy === "bootstrap"
+            {props.busy === "bootstrap" || props.busy === "public-deploy"
               ? "Deploying…"
               : !props.walletConnected
                 ? "Connect MetaMask first"
@@ -1270,7 +1442,7 @@ function DealPanel(props: {
             }
             onClick={props.onStart}
           >
-            {props.busy === "bootstrap"
+            {props.busy === "bootstrap" || props.busy === "public-deploy"
               ? "Deploying…"
               : "Deploy MetaMask deal →"}
           </button>
@@ -1405,11 +1577,51 @@ function ChainConsole({ state }: { state: DemoState }) {
       <dl className="contract-list">
         <div>
           <dt>Token</dt>
-          <dd>{shortHex(state.contracts?.token)}</dd>
+          <dd>
+            {explorerHref(
+              state.network?.explorerUrl,
+              "address",
+              state.contracts?.token,
+            ) ? (
+              <a
+                href={explorerHref(
+                  state.network?.explorerUrl,
+                  "address",
+                  state.contracts?.token,
+                )}
+                rel="noreferrer"
+                target="_blank"
+              >
+                {shortHex(state.contracts?.token)} ↗
+              </a>
+            ) : (
+              shortHex(state.contracts?.token)
+            )}
+          </dd>
         </div>
         <div>
           <dt>Escrow</dt>
-          <dd>{shortHex(state.contracts?.escrow)}</dd>
+          <dd>
+            {explorerHref(
+              state.network?.explorerUrl,
+              "address",
+              state.contracts?.escrow,
+            ) ? (
+              <a
+                href={explorerHref(
+                  state.network?.explorerUrl,
+                  "address",
+                  state.contracts?.escrow,
+                )}
+                rel="noreferrer"
+                target="_blank"
+              >
+                {shortHex(state.contracts?.escrow)} ↗
+              </a>
+            ) : (
+              shortHex(state.contracts?.escrow)
+            )}
+          </dd>
         </div>
         <div>
           <dt>Signatures</dt>
@@ -1423,7 +1635,17 @@ function ChainConsole({ state }: { state: DemoState }) {
       {Object.entries(state.transactions ?? {}).map(([name, hash]) => (
         <div className="transaction" key={hash}>
           <span>{name.toUpperCase()} TX</span>
-          <code>{shortHex(hash, 12)}</code>
+          {explorerHref(state.network?.explorerUrl, "tx", hash) ? (
+            <a
+              href={explorerHref(state.network?.explorerUrl, "tx", hash)}
+              rel="noreferrer"
+              target="_blank"
+            >
+              <code>{shortHex(hash, 12)} ↗</code>
+            </a>
+          ) : (
+            <code>{shortHex(hash, 12)}</code>
+          )}
         </div>
       ))}
     </aside>
@@ -1560,8 +1782,8 @@ function AboutPanel() {
           <span>03</span>
           <h3>Escrow execution</h3>
           <p>
-            Exact policies permit token approval, funding, and evidence-backed
-            release only.
+            MetaMask deploys, approves, and funds. WDK permits only the exact
+            evidence-backed release.
           </p>
         </article>
         <article className="honesty-card">
@@ -1575,14 +1797,17 @@ function AboutPanel() {
       </div>
       <section className="run-card">
         <div>
-          <span className="section-label">RUN LOCALLY</span>
-          <h3>One command. One real flow.</h3>
-          <p>Starts Hardhat, Fastify, and Next.js together.</p>
+          <span className="section-label">RUN MODES</span>
+          <h3>Local proof or public Base Sepolia.</h3>
+          <p>
+            The public mode writes contracts and receipts to a real testnet.
+          </p>
         </div>
         <pre>
           <code>
             <span>$</span> npm install{"\n"}
             <span>$</span> npm run demo{"\n"}
+            <span>$</span> npm run demo:testnet{"\n"}
             <span>→</span> http://localhost:3000
           </code>
         </pre>

@@ -84,6 +84,17 @@ type DemoRuntime = {
   offers: DemoOffer[];
 };
 
+export type ExternalDeploymentInput = {
+  playerId: string;
+  buyerAddress: string;
+  tokenAddress: string;
+  escrowAddress: string;
+  tokenDeployTxHash: string;
+  escrowDeployTxHash: string;
+  verifierFundingTxHash: string;
+  mintTxHash: string;
+};
+
 type EvmWdkAccount = {
   approve(input: {
     token: string;
@@ -129,6 +140,224 @@ export class DemoService {
 
   players(): readonly DemoPlayer[] {
     return demoPlayers;
+  }
+
+  async participants(
+    passkey: string,
+    playerId = "mert-kaya",
+  ): Promise<Record<string, unknown>> {
+    await this.#provider.getBlockNumber();
+    const selectedPlayer = playerById(playerId);
+    const wallets = (await this.#vault.exists())
+      ? await this.#vault.list(passkey)
+      : await this.#vault.create(passkey);
+    return {
+      network: this.#networkInfo(),
+      selectedPlayer,
+      participants: {
+        seller: roleAddress(wallets, "SELLER"),
+        player: roleAddress(wallets, "PLAYER"),
+        verifier: roleAddress(wallets, "VERIFIER"),
+      },
+      terms: {
+        totalAmountMicroUsdt: jsonBigInt(TOTAL_AMOUNT),
+        signingBonusMicroUsdt: jsonBigInt(SIGNING_BONUS),
+        milestoneAmountMicroUsdt: jsonBigInt(MILESTONE_AMOUNT),
+        milestoneId: id("appearance-1"),
+      },
+    };
+  }
+
+  async artifacts(): Promise<Record<string, unknown>> {
+    const [token, escrow] = await Promise.all([
+      this.#readArtifact("contracts/test/MockUSDT.sol/MockUSDT.json"),
+      this.#readArtifact("contracts/DeadlineEscrow.sol/DeadlineEscrow.json"),
+    ]);
+    return { token, escrow };
+  }
+
+  async adoptExternalDeployment(
+    passkey: string,
+    input: ExternalDeploymentInput,
+  ): Promise<Record<string, unknown>> {
+    const selectedPlayer = playerById(input.playerId);
+    const wallets = (await this.#vault.exists())
+      ? await this.#vault.list(passkey)
+      : await this.#vault.create(passkey);
+    const buyer = getAddress(input.buyerAddress);
+    const seller = roleAddress(wallets, "SELLER");
+    const player = roleAddress(wallets, "PLAYER");
+    const verifier = roleAddress(wallets, "VERIFIER");
+    const tokenAddress = getAddress(input.tokenAddress);
+    const escrowAddress = getAddress(input.escrowAddress);
+
+    const [tokenArtifact, escrowArtifact] = await Promise.all([
+      this.#readArtifact("contracts/test/MockUSDT.sol/MockUSDT.json"),
+      this.#readArtifact("contracts/DeadlineEscrow.sol/DeadlineEscrow.json"),
+    ]);
+    const token = new Contract(tokenAddress, tokenArtifact.abi, this.#provider);
+    const escrow = new Contract(
+      escrowAddress,
+      escrowArtifact.abi,
+      this.#provider,
+    );
+    const milestone: DealMilestoneAuthorization = {
+      id: id("appearance-1"),
+      threshold: 1n,
+      amount: MILESTONE_AMOUNT,
+      beneficiary: seller,
+    };
+    const [
+      tokenCode,
+      escrowCode,
+      tokenDecimals,
+      contractToken,
+      contractBuyer,
+      contractSeller,
+      contractPlayer,
+      contractVerifier,
+      dealId,
+      totalAmount,
+      signingBonus,
+      milestoneRoot,
+      fundingDeadline,
+      settlementDeadline,
+      contractDigest,
+    ] = await Promise.all([
+      this.#provider.getCode(tokenAddress),
+      this.#provider.getCode(escrowAddress),
+      token.getFunction("decimals")(),
+      escrow.getFunction("token")(),
+      escrow.getFunction("buyer")(),
+      escrow.getFunction("seller")(),
+      escrow.getFunction("player")(),
+      escrow.getFunction("verifier")(),
+      escrow.getFunction("dealId")(),
+      escrow.getFunction("totalAmount")(),
+      escrow.getFunction("signingBonus")(),
+      escrow.getFunction("milestoneRoot")(),
+      escrow.getFunction("fundingDeadline")(),
+      escrow.getFunction("settlementDeadline")(),
+      escrow.getFunction("authorizationDigest")(),
+    ]);
+    if (tokenCode === "0x" || escrowCode === "0x") {
+      throw new Error("Public testnet contracts were not found");
+    }
+    if (BigInt(tokenDecimals) !== 6n) {
+      throw new Error("Test USDt must use six decimals");
+    }
+    const addressChecks = [
+      [String(contractToken), tokenAddress, "token"],
+      [String(contractBuyer), buyer, "buyer"],
+      [String(contractSeller), seller, "seller"],
+      [String(contractPlayer), player, "player"],
+      [String(contractVerifier), verifier, "verifier"],
+    ] as const;
+    for (const [actual, expected, field] of addressChecks) {
+      if (getAddress(actual) !== getAddress(expected)) {
+        throw new Error(`Escrow ${field} does not match the prepared deal`);
+      }
+    }
+    if (
+      BigInt(totalAmount) !== TOTAL_AMOUNT ||
+      BigInt(signingBonus) !== SIGNING_BONUS ||
+      String(milestoneRoot) !== hashMilestones([milestone])
+    ) {
+      throw new Error("Escrow commercial terms do not match La Forza terms");
+    }
+
+    const envelope: DealAuthorizationEnvelope = {
+      chainId: this.config.CHAIN_ID,
+      verifyingContract: escrowAddress,
+      authorization: {
+        dealId: String(dealId),
+        buyer,
+        seller,
+        player,
+        token: tokenAddress,
+        totalAmount: BigInt(totalAmount),
+        signingBonus: BigInt(signingBonus),
+        milestoneRoot: String(milestoneRoot),
+        fundingDeadline: BigInt(fundingDeadline),
+        settlementDeadline: BigInt(settlementDeadline),
+      },
+    };
+    if (String(contractDigest) !== hashDealAuthorization(envelope)) {
+      throw new Error("Public testnet authorization digest mismatch");
+    }
+
+    const receipts = await Promise.all(
+      [
+        input.tokenDeployTxHash,
+        input.escrowDeployTxHash,
+        input.verifierFundingTxHash,
+        input.mintTxHash,
+      ].map((hash) => this.#wait(hash)),
+    );
+    if (
+      receipts.some(
+        (receipt) => receipt.from.toLowerCase() !== buyer.toLowerCase(),
+      )
+    ) {
+      throw new Error("Every deployment transaction must come from the buyer");
+    }
+    if (getAddress(receipts[0]!.contractAddress!) !== tokenAddress) {
+      throw new Error("Token deployment receipt does not match the token");
+    }
+    if (getAddress(receipts[1]!.contractAddress!) !== escrowAddress) {
+      throw new Error("Escrow deployment receipt does not match the escrow");
+    }
+    if (getAddress(receipts[2]!.to!) !== verifier) {
+      throw new Error(
+        "Verifier gas transaction does not fund the WDK verifier",
+      );
+    }
+    if (getAddress(receipts[3]!.to!) !== tokenAddress) {
+      throw new Error("Mint transaction does not target test USDt");
+    }
+
+    const now = Date.now();
+    this.#runtime = {
+      wallets,
+      buyerAddress: buyer,
+      custodyMode: "METAMASK",
+      tokenAddress,
+      escrowAddress,
+      envelope,
+      milestone,
+      signatures: {},
+      transactions: {
+        tokenDeployment: input.tokenDeployTxHash,
+        escrowDeployment: input.escrowDeployTxHash,
+        verifierGas: input.verifierFundingTxHash,
+        mint: input.mintTxHash,
+      },
+      selectedPlayer,
+      offers: [
+        {
+          id: `offer-${now}-seller-ask`,
+          direction: "INCOMING",
+          from: selectedPlayer.currentClub,
+          to: "Atlas FC",
+          amountMicroUsdt: "950000000",
+          signingBonusMicroUsdt: jsonBigInt(SIGNING_BONUS),
+          status: "RECEIVED",
+          createdAt: new Date().toISOString(),
+          note: `Initial asking terms for ${selectedPlayer.name}`,
+        },
+      ],
+    };
+    await this.#events.clear();
+    await this.#events.append("PUBLIC_TESTNET_DEAL_DEPLOYED", {
+      chainId: this.config.CHAIN_ID,
+      buyer,
+      tokenAddress,
+      escrowAddress,
+      playerId: selectedPlayer.id,
+      tokenDeployTxHash: input.tokenDeployTxHash,
+      escrowDeployTxHash: input.escrowDeployTxHash,
+    });
+    return this.state();
   }
 
   async bootstrap(
@@ -587,7 +816,13 @@ export class DemoService {
   async state(): Promise<Record<string, unknown>> {
     const events = await this.#events.list();
     if (!this.#runtime)
-      return { initialized: false, players: demoPlayers, offers: [], events };
+      return {
+        initialized: false,
+        network: this.#networkInfo(),
+        players: demoPlayers,
+        offers: [],
+        events,
+      };
     const runtime = this.#runtime;
     const tokenArtifact = await this.#readArtifact(
       "contracts/test/MockUSDT.sol/MockUSDT.json",
@@ -620,17 +855,7 @@ export class DemoService {
 
     return {
       initialized: true,
-      network: {
-        name: "LaForza Local EVM",
-        chainId: this.config.CHAIN_ID,
-        rpcUrl: this.config.CHAIN_RPC_URL,
-        nativeCurrency: {
-          name: "Test Ether",
-          symbol: "ETH",
-          decimals: 18,
-        },
-        disclaimer: "Demo-only test USDT. No real funds or mainnet assets.",
-      },
+      network: this.#networkInfo(),
       custodyMode: runtime.custodyMode,
       deal: {
         title: `Atlas FC × ${runtime.selectedPlayer.currentClub} — International Registration`,
@@ -720,6 +945,34 @@ export class DemoService {
       expiresAt: new Date(
         Number(envelope.authorization.fundingDeadline) * 1000,
       ).toISOString(),
+    };
+  }
+
+  #networkInfo(): Record<string, unknown> {
+    if (this.config.CHAIN_ID === 84532) {
+      return {
+        name: "Base Sepolia",
+        chainId: 84532,
+        rpcUrl: this.config.CHAIN_RPC_URL,
+        explorerUrl: "https://sepolia-explorer.base.org",
+        publicTestnet: true,
+        nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+        disclaimer:
+          "Public Base Sepolia records. La Forza test USDt is not official Tether.",
+      };
+    }
+    return {
+      name: "LaForza Local EVM",
+      chainId: this.config.CHAIN_ID,
+      rpcUrl: this.config.CHAIN_RPC_URL,
+      explorerUrl: null,
+      publicTestnet: false,
+      nativeCurrency: {
+        name: "Test Ether",
+        symbol: "ETH",
+        decimals: 18,
+      },
+      disclaimer: "Demo-only test USDt. No real funds or mainnet assets.",
     };
   }
 
