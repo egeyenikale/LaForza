@@ -11,6 +11,7 @@ import {
   getCreate2Address,
   id,
   Interface,
+  JsonRpcProvider,
   keccak256,
   parseEther,
   parseUnits,
@@ -27,6 +28,12 @@ const TEST_USDT_FAUCET_AMOUNT = 50_000n * TEST_USDT_UNIT;
 const BASE_SEPOLIA_CHAIN_ID = 84532;
 const BASE_SEPOLIA_TEST_TOKEN = "0xEb1A4eee8C8E7f0429e1F0A2AC33584D0A6124b4";
 const CREATE2_DEPLOYER = "0x4e59b44847b379578588920cA78FbF26c0B4956C";
+const BASE_SEPOLIA_RPC_URL = "https://sepolia.base.org";
+const deploymentReadProvider = new JsonRpcProvider(
+  BASE_SEPOLIA_RPC_URL,
+  BASE_SEPOLIA_CHAIN_ID,
+  { staticNetwork: true },
+);
 
 type Tab = "overview" | "players" | "offers" | "deal" | "ledger" | "about";
 
@@ -456,18 +463,59 @@ const deployViaCreate2 = async (
     );
   }
   const signer = await provider.getSigner(owner);
-  const transaction = await signer.sendTransaction({
-    to: CREATE2_DEPLOYER,
-    data: concat([salt, deployment.data]),
-  });
-  const receipt = await transaction.wait();
-  if (!receipt || receipt.status !== 1) {
-    throw new Error(`Contract deployment failed: ${transaction.hash}`);
+  const callData = concat([salt, deployment.data]);
+  try {
+    const transaction = await signer.sendTransaction({
+      to: CREATE2_DEPLOYER,
+      data: callData,
+    });
+    const receipt = await transaction.wait();
+    if (!receipt || receipt.status !== 1) {
+      throw new Error(`Contract deployment failed: ${transaction.hash}`);
+    }
+    if (
+      (await deploymentReadProvider.getCode(
+        expectedAddress,
+        receipt.blockNumber,
+      )) === "0x"
+    ) {
+      throw new Error("CREATE2 deployer did not create the expected contract");
+    }
+    return { address: expectedAddress, transactionHash: transaction.hash };
+  } catch (error) {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      if ((await deploymentReadProvider.getCode(expectedAddress)) !== "0x") {
+        const response = await fetch(
+          `${BASE_SEPOLIA_BLOCKSCOUT_API}/addresses/${owner}/transactions`,
+          { cache: "no-store" },
+        );
+        if (response.ok) {
+          const body = (await response.json()) as {
+            items?: Array<{
+              hash: string;
+              raw_input?: string;
+              status?: string;
+              to?: { hash?: string } | null;
+            }>;
+          };
+          const recovered = body.items?.find(
+            (item) =>
+              item.status === "ok" &&
+              item.to?.hash?.toLowerCase() === CREATE2_DEPLOYER.toLowerCase() &&
+              item.raw_input?.toLowerCase() === callData.toLowerCase(),
+          );
+          if (recovered) {
+            return {
+              address: expectedAddress,
+              transactionHash: recovered.hash,
+            };
+          }
+        }
+      }
+      await wait(1_000);
+    }
+    throw error;
   }
-  if ((await provider.getCode(expectedAddress, receipt.blockNumber)) === "0x") {
-    throw new Error("CREATE2 deployer did not create the expected contract");
-  }
-  return { address: expectedAddress, transactionHash: transaction.hash };
 };
 
 const LOCAL_CHAIN = {
@@ -1066,7 +1114,6 @@ export default function HomePage() {
           )) ??
           (await deployViaCreate2(provider, buyerAddress, tokenFactory, [])));
       const tokenAddress = tokenDeployment.address;
-      const token = new Contract(tokenAddress, artifacts.token.abi, signer);
 
       const latestBlock = await provider.getBlock("latest");
       if (!latestBlock) throw new Error("Could not read the testnet clock");
@@ -1129,32 +1176,6 @@ export default function HomePage() {
         ));
       const escrowAddress = escrowDeployment.address;
 
-      let verifierFundingTxHash: string | undefined;
-      const verifierBalance = await provider.getBalance(
-        prepared.participants.verifier,
-      );
-      if (verifierBalance < parseEther("0.00005")) {
-        const verifierFunding = await signer.sendTransaction({
-          to: prepared.participants.verifier,
-          value: parseEther("0.0001"),
-        });
-        await verifierFunding.wait();
-        verifierFundingTxHash = verifierFunding.hash;
-      }
-
-      let mintTxHash: string | undefined;
-      const buyerTokenBalance = (await token.getFunction("balanceOf")(
-        buyerAddress,
-      )) as bigint;
-      if (buyerTokenBalance < TEST_USDT_FAUCET_AMOUNT) {
-        const mint = await token.getFunction("mint")(
-          buyerAddress,
-          TEST_USDT_FAUCET_AMOUNT,
-        );
-        await mint.wait();
-        mintTxHash = mint.hash;
-      }
-
       const response = await fetch(`${API_BASE}/demo/adopt`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -1165,8 +1186,6 @@ export default function HomePage() {
           escrowAddress,
           tokenDeployTxHash: tokenDeployment.transactionHash,
           escrowDeployTxHash: escrowDeployment.transactionHash,
-          ...(verifierFundingTxHash ? { verifierFundingTxHash } : {}),
-          ...(mintTxHash ? { mintTxHash } : {}),
         }),
       });
       const result = (await response.json()) as DemoState & { error?: string };
