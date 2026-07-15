@@ -91,7 +91,7 @@ main {
   width: 34px;
 }
 .brand-logo-mark {
-  background: #223033;
+  background: #34393c;
   border: 1px solid rgba(255, 255, 255, 0.24);
   display: inline-block;
   height: 38px;
@@ -101,11 +101,12 @@ main {
 }
 .brand-logo-mark img {
   height: 96px;
-  left: -29px;
+  left: 50%;
   max-width: none;
   position: absolute;
-  top: -19px;
-  width: 96px;
+  top: 50%;
+  transform: translate(-50%, -39%);
+  width: 144px;
 }
 .nav-links {
   display: flex;
@@ -1324,35 +1325,45 @@ footer {
 }
 
 .landing-hero {
+  align-items: stretch;
+  display: flex;
   min-height: 880px;
 }
 .landing-logo-showcase {
-  filter: contrast(1.08) saturate(1.25);
-  height: min(54vw, 620px);
-  opacity: 0.82;
-  position: absolute;
-  right: clamp(-80px, 1vw, 30px);
-  top: 105px;
-  width: min(54vw, 620px);
-  z-index: 1;
-  -webkit-mask-image: radial-gradient(
-    ellipse at center,
-    #000 42%,
-    rgba(0, 0, 0, 0.76) 58%,
-    transparent 76%
-  );
-  mask-image: radial-gradient(
-    ellipse at center,
-    #000 42%,
-    rgba(0, 0, 0, 0.76) 58%,
-    transparent 76%
-  );
+  align-self: center;
+  background: #3a3f42;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.38);
+  justify-self: end;
+  max-width: 680px;
+  overflow: hidden;
+  position: relative;
+  width: 100%;
 }
 .landing-logo-showcase img {
-  object-fit: contain;
+  display: block;
+  height: auto;
+  width: 100%;
 }
 .landing-hero-content {
-  padding-bottom: 105px;
+  align-items: center;
+  display: grid;
+  gap: clamp(48px, 6vw, 110px);
+  grid-template-columns: minmax(0, 1.08fr) minmax(380px, 0.92fr);
+  margin: 0 auto;
+  max-width: 1720px;
+  padding: 145px clamp(24px, 5.5vw, 100px) 90px;
+  width: 100%;
+}
+.landing-hero-copy {
+  min-width: 0;
+}
+.landing-hero-content h1 {
+  font-size: clamp(55px, 6.4vw, 108px);
+  max-width: 900px;
+}
+.landing-hero-content .hero-copy {
+  max-width: 690px;
 }
 .landing-section {
   display: grid;
@@ -1531,8 +1542,18 @@ footer {
   .landing-control {
     grid-template-columns: 1fr;
   }
+  .landing-hero {
+    min-height: auto;
+  }
+  .landing-hero-content {
+    gap: 58px;
+    grid-template-columns: 1fr;
+    padding-bottom: 80px;
+    padding-top: 145px;
+  }
   .landing-logo-showcase {
-    display: none;
+    justify-self: center;
+    max-width: 720px;
   }
 }
 
@@ -1542,6 +1563,18 @@ footer {
   }
   .hero-content {
     padding-top: 135px;
+  }
+  .landing-hero-content {
+    gap: 44px;
+    padding: 125px 18px 64px;
+  }
+  .landing-hero-content h1 {
+    font-size: clamp(46px, 14vw, 62px);
+    line-height: 0.88;
+    margin-bottom: 28px;
+  }
+  .landing-logo-showcase {
+    width: 100%;
   }
   h1 {
     font-size: 54px;
@@ -1621,6 +1654,11 @@ footer {
     font-size: 0;
     gap: 0;
     padding: 12px;
+  }
+  .landing-nav .nav-demo-link {
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    padding: 11px 12px;
   }
   .nav-wallet .live-dot {
     display: block;

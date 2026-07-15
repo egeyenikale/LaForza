@@ -10,8 +10,8 @@ export default function LandingPage() {
             <Image
               alt="La Forza emblem"
               height={96}
-              src="/images/laforza-logo.png"
-              width={96}
+              src="/images/laforza-logo-green.png"
+              width={144}
             />
           </span>
           <span>LA FORZA</span>
@@ -28,39 +28,42 @@ export default function LandingPage() {
 
       <section className="hero landing-hero">
         <div className="hero-shade" />
-        <div className="landing-logo-showcase" aria-hidden="true">
-          <Image
-            alt=""
-            fill
-            priority
-            sizes="(max-width: 980px) 0px, 42vw"
-            src="/images/laforza-logo.png"
-          />
-        </div>
         <div className="hero-content landing-hero-content">
-          <div className="eyebrow">FOOTBALL OPERATIONS / TETHER WDK</div>
-          <h1>
-            The transfer desk,
-            <br />
-            <em>finally on-chain.</em>
-          </h1>
-          <p className="hero-copy">
-            Select a player, negotiate within a club mandate, sign from a real
-            MetaMask account, and settle test USD₮ through a programmable EVM
-            escrow.
-          </p>
-          <div className="actions">
-            <Link className="primary-button" href="/app">
-              Try the live demo <span>↗</span>
-            </Link>
-            <a className="text-link" href="#product">
-              See how it works
-            </a>
+          <div className="landing-hero-copy">
+            <div className="eyebrow">FOOTBALL OPERATIONS / TETHER WDK</div>
+            <h1>
+              The transfer desk,
+              <br />
+              <em>finally on-chain.</em>
+            </h1>
+            <p className="hero-copy">
+              Select a player, negotiate within a club mandate, sign from a real
+              MetaMask account, and settle test USD₮ through a programmable EVM
+              escrow.
+            </p>
+            <div className="actions">
+              <Link className="primary-button" href="/app">
+                Try the live demo <span>↗</span>
+              </Link>
+              <a className="text-link" href="#product">
+                See how it works
+              </a>
+            </div>
+            <div className="hero-proof">
+              <span>REAL METAMASK SIGNATURES</span>
+              <span>6-DECIMAL TEST USD₮</span>
+              <span>EVM ESCROW RECEIPTS</span>
+            </div>
           </div>
-          <div className="hero-proof">
-            <span>REAL METAMASK SIGNATURES</span>
-            <span>6-DECIMAL TEST USD₮</span>
-            <span>EVM ESCROW RECEIPTS</span>
+          <div className="landing-logo-showcase">
+            <Image
+              alt="La Forza — Deals. Trust. Future."
+              height={1024}
+              priority
+              sizes="(max-width: 680px) 92vw, (max-width: 1100px) 72vw, 42vw"
+              src="/images/laforza-logo-green.png"
+              width={1536}
+            />
           </div>
         </div>
       </section>
