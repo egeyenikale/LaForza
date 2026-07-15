@@ -26,7 +26,11 @@
     "node": ">=22.17"
   },
   "overrides": {
-    "@tetherto/wdk-wallet": "1.0.0-beta.13"
+    "@tetherto/wdk-wallet": "1.0.0-beta.13",
+    "sodium-universal": "$sodium-universal"
+  },
+  "dependencies": {
+    "sodium-universal": "file:backend/vendor/sodium-universal-shim"
   },
   "devDependencies": {
     "@tetherto/wdk-wallet": "1.0.0-beta.13",

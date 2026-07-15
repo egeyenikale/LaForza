@@ -1,0 +1,11 @@
+{
+  "name": "sodium-universal",
+  "version": "5.0.1",
+  "private": true,
+  "type": "commonjs",
+  "main": "index.cjs",
+  "exports": "./index.cjs",
+  "dependencies": {
+    "sodium-javascript": "0.8.0"
+  }
+}
