@@ -22,5 +22,6 @@ deployments/local/
 # Local wallet material must never be committed
 .wallets/
 .data/
+.data-base/
 *.keystore
 *.mnemonic

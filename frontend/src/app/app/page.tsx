@@ -130,6 +130,8 @@ type PreparedParticipants = {
 };
 
 type InjectedProvider = Eip1193Provider & {
+  isMetaMask?: boolean;
+  providers?: InjectedProvider[];
   on?: (event: string, listener: (...args: unknown[]) => void) => void;
   removeListener?: (
     event: string,
@@ -137,11 +139,88 @@ type InjectedProvider = Eip1193Provider & {
   ) => void;
 };
 
+type Eip6963ProviderDetail = {
+  info: {
+    name: string;
+    rdns: string;
+  };
+  provider: InjectedProvider;
+};
+
 declare global {
   interface Window {
     ethereum?: InjectedProvider;
   }
 }
+
+let cachedMetaMaskProvider: InjectedProvider | undefined;
+
+const legacyMetaMaskProvider = () => {
+  if (typeof window === "undefined") return undefined;
+  const injected = window.ethereum;
+  if (!injected) return undefined;
+  const providers = injected.providers ?? [];
+  return (
+    providers.find((provider) => provider.isMetaMask) ??
+    (injected.isMetaMask ? injected : undefined)
+  );
+};
+
+const resolveMetaMaskProvider = async (): Promise<InjectedProvider> => {
+  if (cachedMetaMaskProvider) return cachedMetaMaskProvider;
+  if (typeof window === "undefined") {
+    throw new Error("MetaMask is only available in the browser");
+  }
+
+  const announced = await new Promise<InjectedProvider | undefined>(
+    (resolve) => {
+      let settled = false;
+      let fallback = legacyMetaMaskProvider();
+      const finish = (provider?: InjectedProvider) => {
+        if (settled) return;
+        settled = true;
+        window.removeEventListener("eip6963:announceProvider", onAnnounce);
+        resolve(provider);
+      };
+      const onAnnounce = (event: Event) => {
+        const detail = (event as CustomEvent<Eip6963ProviderDetail>).detail;
+        if (detail?.info?.rdns === "io.metamask") {
+          finish(detail.provider);
+        } else if (!fallback && detail?.provider?.isMetaMask) {
+          fallback = detail.provider;
+        }
+      };
+      window.addEventListener("eip6963:announceProvider", onAnnounce);
+      window.dispatchEvent(new Event("eip6963:requestProvider"));
+      window.setTimeout(() => finish(fallback), 300);
+    },
+  );
+
+  if (!announced) {
+    throw new Error(
+      "MetaMask was not detected. Unlock MetaMask, disable conflicting wallet extensions for this site, then reload.",
+    );
+  }
+  cachedMetaMaskProvider = announced;
+  return announced;
+};
+
+const readableWalletError = (error: unknown, fallback: string) => {
+  const nested = error as {
+    message?: string;
+    error?: { message?: string };
+    info?: { error?: { message?: string } };
+  };
+  const message =
+    nested?.info?.error?.message ??
+    nested?.error?.message ??
+    nested?.message ??
+    fallback;
+  if (message.includes("reading 'length'")) {
+    return "The injected wallet failed to build the contract deployment. Update and unlock MetaMask, disable other wallet extensions for this site, reload, and retry.";
+  }
+  return message;
+};
 
 const LOCAL_CHAIN = {
   chainId: 31337,
@@ -327,8 +406,8 @@ export default function HomePage() {
 
   const refreshWallet = useCallback(
     async (address: string, nextState: DemoState = state) => {
-      if (!window.ethereum) return;
-      const provider = new BrowserProvider(window.ethereum);
+      const injected = await resolveMetaMaskProvider();
+      const provider = new BrowserProvider(injected);
       const [balance, network] = await Promise.all([
         provider.getBalance(address),
         provider.getNetwork(),
@@ -353,17 +432,17 @@ export default function HomePage() {
   );
 
   const switchToDemoNetwork = useCallback(async () => {
-    if (!window.ethereum) throw new Error("MetaMask extension was not found");
+    const injected = await resolveMetaMaskProvider();
     const network = state.network ?? LOCAL_CHAIN;
     const chainHex = `0x${network.chainId.toString(16)}`;
     try {
-      await window.ethereum.request({
+      await injected.request({
         method: "wallet_switchEthereumChain",
         params: [{ chainId: chainHex }],
       });
     } catch (switchError) {
       if ((switchError as { code?: number }).code !== 4902) throw switchError;
-      await window.ethereum.request({
+      await injected.request({
         method: "wallet_addEthereumChain",
         params: [
           {
@@ -385,11 +464,9 @@ export default function HomePage() {
     setBusy("wallet-connect");
     setError(null);
     try {
-      if (!window.ethereum) {
-        throw new Error("Install MetaMask to run the self-custodial demo");
-      }
+      const injected = await resolveMetaMaskProvider();
       await switchToDemoNetwork();
-      const accounts = (await window.ethereum.request({
+      const accounts = (await injected.request({
         method: "eth_requestAccounts",
       })) as string[];
       const address = accounts[0];
@@ -398,11 +475,7 @@ export default function HomePage() {
       await refreshWallet(address);
       return address;
     } catch (walletError) {
-      setError(
-        walletError instanceof Error
-          ? walletError.message
-          : "MetaMask connection failed",
-      );
+      setError(readableWalletError(walletError, "MetaMask connection failed"));
       return undefined;
     } finally {
       setBusy(null);
@@ -410,7 +483,8 @@ export default function HomePage() {
   }, [refreshWallet, switchToDemoNetwork]);
 
   useEffect(() => {
-    if (!window.ethereum) return;
+    let injected: InjectedProvider | undefined;
+    let cancelled = false;
     const onAccountsChanged = (...args: unknown[]) => {
       const accounts = args[0] as string[] | undefined;
       const address = accounts?.[0] ?? null;
@@ -425,11 +499,18 @@ export default function HomePage() {
       const chainId = args[0];
       if (typeof chainId === "string") setWalletChainId(Number(chainId));
     };
-    window.ethereum.on?.("accountsChanged", onAccountsChanged);
-    window.ethereum.on?.("chainChanged", onChainChanged);
+    void resolveMetaMaskProvider()
+      .then((provider) => {
+        if (cancelled) return;
+        injected = provider;
+        injected.on?.("accountsChanged", onAccountsChanged);
+        injected.on?.("chainChanged", onChainChanged);
+      })
+      .catch(() => undefined);
     return () => {
-      window.ethereum?.removeListener?.("accountsChanged", onAccountsChanged);
-      window.ethereum?.removeListener?.("chainChanged", onChainChanged);
+      cancelled = true;
+      injected?.removeListener?.("accountsChanged", onAccountsChanged);
+      injected?.removeListener?.("chainChanged", onChainChanged);
     };
   }, [refreshWallet]);
 
@@ -465,12 +546,12 @@ export default function HomePage() {
     if (!state.network?.publicTestnet) {
       throw new Error("Public testnet mode is not active");
     }
-    if (!window.ethereum) throw new Error("MetaMask extension was not found");
     setBusy("public-deploy");
     setError(null);
     try {
       await switchToDemoNetwork();
-      const provider = new BrowserProvider(window.ethereum);
+      const injected = await resolveMetaMaskProvider();
+      const provider = new BrowserProvider(injected);
       const signer = await provider.getSigner();
       const balance = await provider.getBalance(address);
       if (balance === 0n) {
@@ -597,9 +678,10 @@ export default function HomePage() {
       await refreshWallet(address, result);
     } catch (deploymentError) {
       setError(
-        deploymentError instanceof Error
-          ? deploymentError.message
-          : "Public testnet deployment failed",
+        readableWalletError(
+          deploymentError,
+          "Public testnet deployment failed",
+        ),
       );
     } finally {
       setBusy(null);
@@ -630,8 +712,8 @@ export default function HomePage() {
     setError(null);
     try {
       await switchToDemoNetwork();
-      if (!window.ethereum) throw new Error("MetaMask extension was not found");
-      const provider = new BrowserProvider(window.ethereum);
+      const injected = await resolveMetaMaskProvider();
+      const provider = new BrowserProvider(injected);
       const signer = await provider.getSigner();
       const signerAddress = await signer.getAddress();
       if (
@@ -675,9 +757,7 @@ export default function HomePage() {
       await refreshWallet(signerAddress, result);
     } catch (signatureError) {
       setError(
-        signatureError instanceof Error
-          ? signatureError.message
-          : "MetaMask signature failed",
+        readableWalletError(signatureError, "MetaMask signature failed"),
       );
     } finally {
       setBusy(null);
@@ -693,8 +773,8 @@ export default function HomePage() {
     setError(null);
     try {
       await switchToDemoNetwork();
-      if (!window.ethereum) throw new Error("MetaMask extension was not found");
-      const provider = new BrowserProvider(window.ethereum);
+      const injected = await resolveMetaMaskProvider();
+      const provider = new BrowserProvider(injected);
       const signer = await provider.getSigner();
       const signerAddress = await signer.getAddress();
       if (
@@ -736,11 +816,7 @@ export default function HomePage() {
       setState(result);
       await refreshWallet(signerAddress, result);
     } catch (fundingError) {
-      setError(
-        fundingError instanceof Error
-          ? fundingError.message
-          : "MetaMask funding failed",
-      );
+      setError(readableWalletError(fundingError, "MetaMask funding failed"));
     } finally {
       setBusy(null);
     }
@@ -755,8 +831,8 @@ export default function HomePage() {
     setError(null);
     try {
       await switchToDemoNetwork();
-      if (!window.ethereum) throw new Error("MetaMask extension was not found");
-      const provider = new BrowserProvider(window.ethereum);
+      const injected = await resolveMetaMaskProvider();
+      const provider = new BrowserProvider(injected);
       const signer = await provider.getSigner();
       const token = new Contract(state.contracts.token, erc20Abi, signer);
       const transaction = await token.getFunction("mint")(
@@ -767,11 +843,7 @@ export default function HomePage() {
       await refreshWallet(walletAddress);
       await loadState();
     } catch (faucetError) {
-      setError(
-        faucetError instanceof Error
-          ? faucetError.message
-          : "Test USDt faucet failed",
-      );
+      setError(readableWalletError(faucetError, "Test USDt faucet failed"));
     } finally {
       setBusy(null);
     }
